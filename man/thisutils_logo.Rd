@@ -2,15 +2,13 @@
 % Please edit documentation in R/thisutils-package.R
 \name{thisutils_logo}
 \alias{thisutils_logo}
-\title{thisutils logo}
+\title{The logo of thisutils}
 \usage{
 thisutils_logo(unicode = cli::is_utf8_output())
 }
 \arguments{
-\item{unicode}{Unicode symbols. Default is \code{TRUE} on UTF-8 platforms.}
-}
-\value{
-A logo with ASCII formatted text
+\item{unicode}{Unicode symbols on UTF-8 platforms.
+Default is \link[cli:is_utf8_output]{cli::is_utf8_output}.}
 }
 \description{
 The thisutils logo, using ASCII or Unicode characters

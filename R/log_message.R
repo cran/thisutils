@@ -21,9 +21,8 @@
 #' The level of the message, which affects the indentation.
 #' Level 1 has no indentation, higher levels add more indentation.
 #' @param symbol Character value, default is *`"  "`* (two spaces).
-#' The symbol used for indentation. When specified, it ignores the level parameter and uses the symbol directly.
-#' @param format Logical value, default is *`FALSE`*.
-#' Whether to use sprintf-style formatting for the message.
+#' The symbol used for indentation.
+#' When specified, it ignores the level parameter and uses the symbol directly.
 #' @param text_color Character value, default is *`NULL`*.
 #' Color for the message text.
 #' Available colors: "red", "green", "blue", "yellow", "magenta", "cyan", "white", "black".
@@ -33,6 +32,8 @@
 #' @param multiline_indent Logical value, default is *`TRUE`*.
 #' Whether to apply consistent formatting (timestamp and indentation) to each line in multiline messages.
 #' When TRUE, each line gets the full formatting; when FALSE, only the first line gets the timestamp.
+#' @param .envir The environment to evaluate calls in. Default is *`parent.frame()`*.
+#' @param .frame The frame to use for error reporting. Default is *`.envir`*.
 #'
 #' @return \code{Formated message} printed to the console.
 #'
@@ -52,6 +53,9 @@
 #' # suppress messages
 #' suppressMessages(log_message("Hello, world!"))
 #' log_message("Hello, world!", verbose = FALSE)
+#' options(log_message.verbose = FALSE)
+#' log_message("Hello, world!")
+#' options(log_message.verbose = TRUE)
 #'
 #' # cli formatting
 #' log_message("hello, {.arg world}!")
@@ -70,8 +74,6 @@
 #' # set indentation
 #' log_message("Hello, world!", level = 2)
 #' log_message("Hello, world!", symbol = "->")
-#' log_message("Hello, %s", "world!", format = TRUE)
-#' log_message("Processing %d items", 42, format = TRUE)
 #'
 #' # multiline message
 #' log_message("Line 1\nLine 2\nLine 3", multiline_indent = TRUE)
@@ -118,6 +120,14 @@
 #'   back_color = "cyan",
 #'   cli_model = FALSE
 #' )
+#'
+#' # cli variables
+#' fun <- function(x) {
+#'   log_message("{.val x}")
+#'   log_message("{.val {x}}")
+#'   log_message("{.val {x + 1}}")
+#' }
+#' fun(1)
 log_message <- function(
     ...,
     verbose = TRUE,
@@ -127,15 +137,19 @@ log_message <- function(
     timestamp_format = "%Y-%m-%d %H:%M:%S",
     level = 1,
     symbol = "  ",
-    format = FALSE,
     text_color = NULL,
     back_color = NULL,
-    multiline_indent = TRUE) {
+    multiline_indent = TRUE,
+    .envir = parent.frame(),
+    .frame = .envir) {
+  verbose <- .get_verbose(verbose)
   message_type <- match.arg(message_type)
-  msg <- .build_message(..., format = format)
+  msg <- .build_message(...)
+
+  .envir <- .get_caller_env(.envir, .frame)
+  caller_call <- .get_caller_call(.frame)
 
   if (message_type == "error") {
-    caller_call <- rlang::caller_call()
     cli::cli_abort(msg, call = caller_call)
   }
 
@@ -148,32 +162,88 @@ log_message <- function(
     symbol = symbol,
     timestamp_format = timestamp_format,
     text_color = text_color,
-    back_color = back_color
-  )
-
-  msg <- .message_formatting(
-    msg = msg,
-    timestamp = timestamp,
-    timestamp_format = timestamp_format,
-    level = level,
-    symbol = symbol,
-    multiline_indent = multiline_indent
-  )
-
-  .output_message(
-    msg = msg,
-    message_type = message_type,
-    cli_model = cli_model,
-    text_color = text_color,
     back_color = back_color,
-    timestamp = timestamp,
-    timestamp_format = timestamp_format,
-    level = level,
-    symbol = symbol,
-    multiline_indent = multiline_indent
+    .frame = .frame
   )
+
+  if (cli_model && grepl("\n", msg)) {
+    .output_multiline_message(
+      msg = msg,
+      message_type = message_type,
+      text_color = text_color,
+      back_color = back_color,
+      timestamp = timestamp,
+      timestamp_format = timestamp_format,
+      level = level,
+      symbol = symbol,
+      multiline_indent = multiline_indent,
+      .envir = .envir
+    )
+  } else {
+    msg <- .message_formatting(
+      msg = msg,
+      timestamp = timestamp,
+      timestamp_format = timestamp_format,
+      level = level,
+      symbol = symbol,
+      multiline_indent = multiline_indent,
+      .envir = .envir
+    )
+
+    .output_message(
+      msg = msg,
+      message_type = message_type,
+      cli_model = cli_model,
+      text_color = text_color,
+      back_color = back_color,
+      timestamp = timestamp,
+      timestamp_format = timestamp_format,
+      level = level,
+      symbol = symbol,
+      multiline_indent = multiline_indent,
+      .envir = .envir
+    )
+  }
 
   invisible(NULL)
+}
+
+.get_verbose <- function(verbose) {
+  verbose_option <- getOption("log_message.verbose", NULL)
+
+  if (is.null(verbose_option)) {
+    return(verbose)
+  }
+
+  if (!is.logical(verbose_option) || length(verbose_option) != 1) {
+    cli::cli_alert_warning(
+      "{.arg log_message.verbose} must be a logical value, set to {.val {verbose}}"
+    )
+    options(log_message.verbose = verbose)
+    verbose <- FALSE
+  }
+
+  if (isTRUE(verbose_option) && isTRUE(verbose)) {
+    verbose <- TRUE
+  }
+
+  if (isFALSE(verbose_option)) {
+    verbose <- FALSE
+  }
+
+  verbose
+}
+
+.build_message <- function(...) {
+  args <- list(...)
+
+  if (length(args) == 0) {
+    return("")
+  }
+
+  msg <- paste0(...)
+
+  capitalize(msg)
 }
 
 .validate_params <- function(
@@ -181,8 +251,9 @@ log_message <- function(
     symbol,
     timestamp_format,
     text_color,
-    back_color) {
-  caller_call <- rlang::caller_call(n = 2)
+    back_color,
+    .frame) {
+  caller_call <- .get_caller_call(.frame)
 
   if (!is.numeric(level) || length(level) != 1 || level < 1 || level != round(level)) {
     cli::cli_abort(
@@ -236,41 +307,14 @@ log_message <- function(
   }
 }
 
-.build_message <- function(..., format = FALSE) {
-  args <- list(...)
-
-  if (length(args) == 0) {
-    return("")
-  }
-
-  msg <- if (format && length(args) > 1) {
-    tryCatch(
-      {
-        invoke_fun(sprintf, args)
-      },
-      error = function(e) {
-        warning(
-          "sprintf formatting failed, falling back to paste0",
-          call. = FALSE,
-          immediate. = TRUE
-        )
-        paste0(...)
-      }
-    )
-  } else {
-    paste0(...)
-  }
-
-  capitalize(msg)
-}
-
 .message_formatting <- function(
     msg,
     timestamp = TRUE,
     timestamp_format = "%Y-%m-%d %H:%M:%S",
     level = 1,
     symbol = "  ",
-    multiline_indent = TRUE) {
+    multiline_indent = TRUE,
+    .envir = parent.frame()) {
   if (multiline_indent && grepl("\n", msg)) {
     return(
       .format_message(
@@ -278,7 +322,8 @@ log_message <- function(
         timestamp = timestamp,
         timestamp_format = timestamp_format,
         level = level,
-        symbol = symbol
+        symbol = symbol,
+        .envir = .envir
       )
     )
   }
@@ -288,7 +333,8 @@ log_message <- function(
     timestamp = timestamp,
     timestamp_format = timestamp_format,
     level = level,
-    symbol = symbol
+    symbol = symbol,
+    .envir = .envir
   )
 }
 
@@ -297,7 +343,8 @@ log_message <- function(
     timestamp = TRUE,
     timestamp_format = "%Y-%m-%d %H:%M:%S",
     level = 1,
-    symbol = "  ") {
+    symbol = "  ",
+    .envir = parent.frame()) {
   parts <- character(0)
 
   if (timestamp) {
@@ -325,7 +372,8 @@ log_message <- function(
     timestamp = TRUE,
     timestamp_format = "%Y-%m-%d %H:%M:%S",
     level = 1,
-    symbol = "  ") {
+    symbol = "  ",
+    .envir = parent.frame()) {
   lines <- strsplit(msg, "\n", fixed = TRUE)[[1]]
 
   timestamp_str <- if (timestamp) {
@@ -357,32 +405,20 @@ log_message <- function(
     timestamp_format = "%Y-%m-%d %H:%M:%S",
     level = 1,
     symbol = "  ",
-    multiline_indent = TRUE) {
+    multiline_indent = TRUE,
+    .envir = parent.frame()) {
   message_type <- match.arg(message_type)
 
   if (cli_model) {
-    if (grepl("\n", msg)) {
-      .output_cli_message(
-        msg = msg,
-        message_type = message_type,
-        text_color = text_color,
-        back_color = back_color,
-        cli_model = cli_model,
-        timestamp = timestamp,
-        timestamp_format = timestamp_format,
-        level = level,
-        symbol = symbol,
-        multiline_indent = multiline_indent
-      )
-      return(invisible(NULL))
-    }
+    msg <- .preprocess_cli_variables(msg, .envir)
 
     if (!is.null(text_color) || !is.null(back_color)) {
       msg <- .color_formatting(
         msg = msg,
         text_color = text_color,
         back_color = back_color,
-        cli_model = cli_model
+        cli_model = cli_model,
+        .envir = .envir
       )
     }
 
@@ -398,7 +434,8 @@ log_message <- function(
         msg = msg,
         text_color = text_color,
         back_color = back_color,
-        cli_model = cli_model
+        cli_model = cli_model,
+        .envir = .envir
       )
     }
 
@@ -412,89 +449,85 @@ log_message <- function(
   }
 }
 
-.output_cli_message <- function(
+.output_multiline_message <- function(
     msg,
     message_type = c("info", "success", "warning"),
     text_color = NULL,
     back_color = NULL,
-    cli_model = TRUE,
     timestamp = TRUE,
     timestamp_format = "%Y-%m-%d %H:%M:%S",
     level = 1,
     symbol = "  ",
-    multiline_indent = TRUE) {
+    multiline_indent = TRUE,
+    .envir = parent.frame()) {
   message_type <- match.arg(message_type)
 
   lines <- strsplit(msg, "\n", fixed = TRUE)[[1]]
 
-  if (length(lines) <= 1) {
+  for (i in seq_along(lines)) {
+    line <- lines[i]
+
+    line <- .preprocess_cli_variables(line, .envir)
+
     if (!is.null(text_color) || !is.null(back_color)) {
-      msg <- .color_formatting(
-        msg = msg,
-        text_color = text_color,
-        back_color = back_color,
-        cli_model = cli_model
-      )
-    }
-
-    switch(
-      EXPR = message_type,
-      "info" = cli::cli_alert_info(msg),
-      "success" = cli::cli_alert_success(msg),
-      "warning" = cli::cli_alert_warning(msg)
-    )
-    return(invisible(NULL))
-  }
-
-  if (!is.null(text_color) || !is.null(back_color)) {
-    lines <- sapply(lines, function(line) {
-      .color_formatting(
+      line <- .color_formatting(
         msg = line,
         text_color = text_color,
         back_color = back_color,
-        cli_model = cli_model
+        cli_model = TRUE,
+        .envir = .envir
       )
-    }, USE.NAMES = FALSE)
-  }
+    }
 
-  first_line <- lines[1]
-  switch(
-    EXPR = message_type,
-    "info" = cli::cli_alert_info(first_line),
-    "success" = cli::cli_alert_success(first_line),
-    "warning" = cli::cli_alert_warning(first_line)
-  )
+    if (i == 1 || multiline_indent) {
+      if (timestamp) {
+        time_str <- format(Sys.time(), timestamp_format)
+        timestamp_part <- paste0("[", time_str, "] ")
+      } else {
+        timestamp_part <- ""
+      }
 
-  if (length(lines) > 1) {
-    remaining_lines <- lines[-1]
+      if (symbol != "  ") {
+        indent_part <- paste0(symbol, " ")
+      } else if (level > 1) {
+        indent_part <- paste(rep("  ", level - 1), collapse = "")
+      } else {
+        indent_part <- ""
+      }
 
-    if (multiline_indent) {
-      icon_space <- "  "
+      formatted_line <- paste0(timestamp_part, indent_part, line)
+      formatted_line <- .preprocess_cli_variables(formatted_line, .envir)
+
+      switch(
+        EXPR = message_type,
+        "info" = cli::cli_alert_info(formatted_line),
+        "success" = cli::cli_alert_success(formatted_line),
+        "warning" = cli::cli_alert_warning(formatted_line)
+      )
     } else {
       icon_width <- 2
 
-      timestamp_width <- if (timestamp) {
-        sample_time <- format(Sys.time(), timestamp_format)
-        nchar(paste0("[", sample_time, "] "))
+      if (timestamp) {
+        time_str <- format(Sys.time(), timestamp_format)
+        timestamp_width <- nchar(paste0("[", time_str, "] "))
       } else {
-        0
+        timestamp_width <- 0
       }
 
       level_indent_width <- if (symbol != "  ") {
         nchar(paste0(symbol, " "))
       } else if (level > 1) {
-        nchar(paste(rep(symbol, level - 1), collapse = ""))
+        nchar(paste(rep("  ", level - 1), collapse = ""))
       } else {
         0
       }
 
       total_prefix_width <- icon_width + timestamp_width + level_indent_width
-      icon_space <- paste(rep(" ", total_prefix_width), collapse = "")
-    }
+      alignment_space <- paste(rep(" ", total_prefix_width), collapse = "")
 
-    for (line in remaining_lines) {
-      aligned_line <- paste0(icon_space, line)
-      cli::cli_verbatim(aligned_line)
+      processed_line <- .preprocess_cli_variables(line, .envir)
+
+      cli::cli_verbatim(paste0(alignment_space, processed_line))
     }
   }
 }
@@ -503,7 +536,8 @@ log_message <- function(
     msg,
     text_color = NULL,
     back_color = NULL,
-    cli_model) {
+    cli_model,
+    .envir = parent.frame()) {
   if (cli_model) {
     result <- msg
 
@@ -586,4 +620,129 @@ log_message <- function(
       msg
     }
   }
+}
+
+.get_caller_call <- function(frame) {
+  if (is.null(frame)) {
+    return(NULL)
+  }
+
+  tryCatch(
+    {
+      if (is.environment(frame)) {
+        call <- sys.call(sys.parent())
+        if (is.call(call)) {
+          return(call)
+        }
+      }
+
+      calls <- sys.calls()
+      frames <- sys.frames()
+      parents <- sys.parents()
+
+      for (i in seq_along(calls)) {
+        call <- calls[[i]]
+        if (is.call(call) && !is.null(call[[1]])) {
+          fun_name <- as.character(call[[1]])
+          if (fun_name %in% c("log_message", ".validate_params")) {
+            if (i > 1) {
+              caller_call <- calls[[i - 1]]
+              if (is.call(caller_call)) {
+                return(caller_call)
+              }
+            }
+          }
+        }
+      }
+
+      return(NULL)
+    },
+    error = function(e) {
+      NULL
+    }
+  )
+}
+
+.get_caller_env <- function(.envir, .frame) {
+  if (is.null(.frame)) {
+    .frame <- .envir
+  }
+
+  if (is.null(.envir)) {
+    .envir <- parent.frame(2)
+  }
+
+  if (is.environment(.envir)) {
+    return(.envir)
+  }
+
+  parent.frame(2)
+}
+
+.search_var_in_frames <- function(var_name) {
+  tryCatch(
+    {
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        frame <- frames[[i]]
+        if (is.environment(frame) && exists(var_name, envir = frame, inherits = FALSE)) {
+          return(get(var_name, envir = frame))
+        }
+      }
+
+      if (exists(var_name, envir = .GlobalEnv, inherits = TRUE)) {
+        return(get(var_name, envir = .GlobalEnv, inherits = TRUE))
+      }
+
+      return(NULL)
+    },
+    error = function(e) {
+      NULL
+    }
+  )
+}
+
+.preprocess_cli_variables <- function(msg, .envir) {
+  pattern <- "\\{\\.(val|code|emph|pkg|field|file|email|url|kbd|arg)\\s+\\{([^}]+)\\}\\}"
+
+  while (grepl(pattern, msg)) {
+    matches <- regmatches(msg, gregexpr(pattern, msg))[[1]]
+
+    for (match in matches) {
+      type <- gsub(pattern, "\\1", match)
+      var_expr <- gsub(pattern, "\\2", match)
+
+      var_value <- tryCatch(
+        {
+          result <- eval(parse(text = var_expr), envir = .envir)
+          if (is.null(result)) {
+            result <- .search_var_in_frames(var_expr)
+          }
+          if (is.null(result)) {
+            var_expr
+          } else {
+            as.character(result)
+          }
+        },
+        error = function(e) {
+          tryCatch(
+            {
+              result <- .search_var_in_frames(var_expr)
+              if (is.null(result)) {
+                var_expr
+              } else {
+                as.character(result)
+              }
+            },
+            error = function(e2) var_expr
+          )
+        }
+      )
+
+      replacement <- paste0("{.", type, " ", var_value, "}")
+      msg <- gsub(match, replacement, msg, fixed = TRUE)
+    }
+  }
+
+  msg
 }

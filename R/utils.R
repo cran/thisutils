@@ -21,110 +21,6 @@
   }
 }
 
-#' @title Parallelize a function
-#'
-#' @md
-#' @param x A vector or list to apply over.
-#' @param fun The function to be applied to each element.
-#' @param cores The number of cores to use for parallelization with \code{\link[foreach]{foreach}}.
-#' Default is *`1`*.
-#' @param export_fun The functions to export the function to workers.
-#' @param verbose Logical value, default is *`TRUE`*.
-#' Whether to print progress messages.
-#'
-#' @return A list of computed results
-#'
-#' @export
-#'
-#' @examples
-#' parallelize_fun(1:3, function(x) {
-#'   Sys.sleep(0.2)
-#'   x^2
-#' })
-#' parallelize_fun(list(1, 2, 3), function(x) {
-#'   Sys.sleep(0.2)
-#'   x^2
-#' })
-parallelize_fun <- function(
-    x,
-    fun,
-    cores = 1,
-    export_fun = NULL,
-    verbose = TRUE) {
-  if (cores == 1) {
-    log_message(
-      "Using 1 core",
-      verbose = verbose
-    )
-    time_str <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-    if (verbose) {
-      options(cli.progress_show_after = 0)
-      options(cli.progress_clear = FALSE)
-      pb_id <- cli::cli_progress_bar(
-        format = paste0(
-          "{cli::pb_spin} [{time_str}] ",
-          "Running [{cli::pb_current}/{cli::pb_total}] ",
-          "ETA: {cli::pb_eta}"
-        ),
-        format_done = paste0(
-          "{cli::col_green(cli::symbol$tick)} [{time_str}] ",
-          "Completed {cli::pb_total} tasks ",
-          "in {cli::pb_elapsed}"
-        ),
-        total = length(x)
-      )
-      fun_progress <- function(...) {
-        on.exit(cli::cli_progress_update(id = pb_id), add = TRUE)
-        fun(...)
-      }
-      output_list <- purrr::map(x, fun_progress)
-      options(cli.progress_show_after = NULL)
-      options(cli.progress_clear = NULL)
-    }
-    if (!verbose) {
-      output_list <- base::lapply(X = x, FUN = fun)
-    }
-  }
-
-  if (cores > 1) {
-    cores <- .cores_detect(cores, length(x))
-
-    doParallel::registerDoParallel(cores = cores)
-    log_message(
-      "Using ", foreach::getDoParWorkers(), " cores",
-      verbose = verbose
-    )
-
-    i <- NULL
-    "%dopar%" <- foreach::"%dopar%"
-    output_list <- foreach::foreach(
-      i = seq_along(x),
-      .export = export_fun
-    ) %dopar% {
-      fun(x[[i]])
-    }
-    doParallel::stopImplicitCluster()
-  }
-
-  names(output_list) <- x
-
-  return(output_list)
-}
-
-.cores_detect <- function(
-    cores = 1,
-    num_session = NULL) {
-  if (is.null(num_session)) {
-    return(1)
-  } else {
-    cores <- min(
-      (parallel::detectCores(logical = FALSE) - 1), cores, num_session
-    )
-
-    return(cores)
-  }
-}
-
 #' Invoke a function with a list of arguments
 #' @param .fn A function, or function name as a string.
 #' @param .args A list of arguments.
@@ -486,30 +382,27 @@ try_get <- function(
   return(out)
 }
 
-#' Download File from the Internet
+#' @title Download file from the Internet
 #'
 #' @md
 #' @inheritParams utils::download.file
 #' @param methods Methods to be used for downloading files.
 #' The default is to try different download methods in turn until the download is successfully completed.
 #' @param max_tries Number of tries for each download method.
-#' @param verbose Logical value, default is `TRUE`.
-#' Whether to print progress messages.
-#' @param ... Other arguments passed to [utils::download.file]
+#' @param ... Other arguments passed to [utils::download.file].
 #'
 #' @export
 download <- function(
     url,
     destfile,
-    methods = c("auto", "wget", "libcurl", "curl", "wininet", "internal"),
-    verbose = TRUE,
+    methods = c(
+      "auto", "wget", "libcurl", "curl", "wininet", "internal"
+    ),
+    quiet = FALSE,
     ...,
     max_tries = 2) {
   if (missing(url) || missing(destfile)) {
-    log_message(
-      "'url' and 'destfile' must be both provided.",
-      message_type = "error"
-    )
+    stop("'url' and 'destfile' must be both provided.")
   }
   ntry <- 0
   status <- NULL
@@ -522,25 +415,15 @@ download <- function(
               url = url,
               destfile = destfile,
               method = method,
-              quiet = !verbose,
+              quiet = quiet,
               ...
             )
           )
           status <- 1
-        },
-        error = function(error) {
-          log_message(
-            error,
-            message_type = "warning"
-          )
-          log_message(
-            "Cannot download from the url: ", url,
-            message_type = "warning"
-          )
-          log_message(
-            "Failed to download using {.val method}. Retry...",
-            message_type = "warning"
-          )
+        }, error = function(error) {
+          log_message(error)
+          log_message("Cannot download from the url: ", url)
+          log_message("Failed to download using \"", method, "\". Retry...\n")
           Sys.sleep(1)
           return(NULL)
         }
@@ -551,10 +434,7 @@ download <- function(
     }
     ntry <- ntry + 1
     if (is.null(status) && ntry >= max_tries) {
-      log_message(
-        "Download failed.",
-        message_type = "error"
-      )
+      log_message("Download failed.", message_type = "error")
     }
   }
   return(invisible(NULL))
