@@ -1,8 +1,8 @@
 Type: Package
 Package: thisutils
 Title: Collection of Utility Functions for Data Analysis and Computing
-Version: 0.0.7
-Date: 2025-07-19
+Version: 0.1.2
+Date: 2025-08-19
 Authors@R: 
     person("Meng", "Xu", email = "mengxu98@qq.com", role = c("aut", "cre"), comment = c(ORCID = "0000-0002-8300-1054"))
 Maintainer: Meng Xu <mengxu98@qq.com>
@@ -21,7 +21,7 @@ Encoding: UTF-8
 RoxygenNote: 7.3.2
 Language: en-US
 NeedsCompilation: yes
-Packaged: 2025-07-20 08:06:23 UTC; mx
+Packaged: 2025-08-19 07:09:03 UTC; mx
 Author: Meng Xu [aut, cre] (ORCID: <https://orcid.org/0000-0002-8300-1054>)
 Repository: CRAN
-Date/Publication: 2025-07-20 08:40:02 UTC
+Date/Publication: 2025-08-19 07:50:02 UTC
