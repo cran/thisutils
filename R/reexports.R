@@ -1,0 +1,2 @@
+#' @importFrom Rcpp compileAttributes
+NULL
