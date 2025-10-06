@@ -4,26 +4,6 @@
 #' Automatically generate a file containing functions and related code for R package development.
 #'
 #' @md
-#' @param desc_file The DESCRIPTION file.
-#' Default is `"DESCRIPTION"`, it will be used to extract package information.
-#' Using `add_pkg_file()` will automatically use the DESCRIPTION file in the current directory
-#' and create `<pkg_name>-package.R` in the `"R"` directory.
-#' If you want to use some specific information,
-#' such as `author_name` or `author_email`, you can provide them manually.
-#' @param pkg_name Character string, the name of the package.
-#' Default is `NULL`, which will be read from DESCRIPTION file.
-#' @param title Character string, title of the package.
-#' Default is `NULL`, which will be read from DESCRIPTION file.
-#' @param pkg_description Character string, short description of the package.
-#' Default is `NULL`, which will be read from DESCRIPTION file.
-#' @param author_name Character string, name of the package author.
-#' Default is `NULL`, which will be read from DESCRIPTION file.
-#' @param author_email Character string, email of the package author.
-#' Default is `NULL`, which will be read from DESCRIPTION file.
-#' @param github_url Character string, GitHub URL of the package.
-#' Default is `NULL`, which will be read from DESCRIPTION file or constructed based on package name.
-#' @param output_dir Character string, directory where to save the package file.
-#' Default is `"R"`.
 #' @param use_figlet Whether to use figlet for ASCII art generation.
 #' Default is `TRUE`. Details see [figlet].
 #' @param figlet_font Character string, figlet font to use.
@@ -39,14 +19,6 @@
 #'
 #' @export
 add_pkg_file <- function(
-    desc_file = "DESCRIPTION",
-    pkg_name = NULL,
-    title = NULL,
-    pkg_description = NULL,
-    author_name = NULL,
-    author_email = NULL,
-    github_url = NULL,
-    output_dir = "R",
     use_figlet = TRUE,
     figlet_font = "Slant",
     colors = c(
@@ -55,35 +27,47 @@ add_pkg_file <- function(
     ),
     unicode = TRUE,
     verbose = TRUE) {
+  desc_file <- "DESCRIPTION"
   desc_info <- .read_description(desc_file, verbose)
 
+  pkg_name <- desc_info$Package
+  title <- desc_info$Title
+  pkg_description <- desc_info$Description
+  author_name <- desc_info$Author
+  author_email <- desc_info$Email
+  github_url <- desc_info$GitHub_URL
+
   if (is.null(pkg_name)) {
-    pkg_name <- desc_info$Package
-    if (is.null(pkg_name)) {
-      log_message(
-        "Package name not provided and not found in 'DESCRIPTION' file",
-        message_type = "error"
-      )
-    }
+    log_message(
+      "{.cls package_name} not found in {.file {desc_file}}.
+      Please add 'Package: {.cls package_name}'",
+      message_type = "error"
+    )
   }
   if (is.null(title)) {
-    title <- desc_info$Title
-  }
-  if (is.null(pkg_description)) {
-    pkg_description <- desc_info$Description
+    log_message(
+      "{.cls package_title} not found in {.file {desc_file}}.
+      Please add 'Title: {.cls package_title}'",
+      message_type = "error"
+    )
   }
   if (is.null(author_name)) {
-    author_name <- desc_info$Author
+    log_message(
+      "{.cls author_name} not found in {.file {desc_file}}.
+      Please add 'Authors@R:' or 'Maintainer:' field",
+      message_type = "error"
+    )
   }
   if (is.null(author_email)) {
-    author_email <- desc_info$Email
-  }
-  if (is.null(github_url)) {
-    github_url <- desc_info$GitHub_URL
+    log_message(
+      "{.cls author_email} not found in {.file {desc_file}}.
+      Please add email to 'Authors@R:' or 'Maintainer:' field",
+      message_type = "error"
+    )
   }
 
   log_message(
-    "Creating package logo for: {.pkg {pkg_name}}",
+    "Creating logo for: {.pkg {pkg_name}}",
     verbose = verbose
   )
 
@@ -91,17 +75,26 @@ add_pkg_file <- function(
   if (use_figlet) {
     tryCatch(
       {
-        ascii_art <- figlet(pkg_name, font = figlet_font)
+        ascii_art <- figlet(
+          pkg_name,
+          font = figlet_font,
+          width = 60,
+          justify = "centre",
+          absolute = TRUE
+        )
         ascii_lines <- as.character(ascii_art)
         log_message(
-          "Generated figlet ASCII art successfully",
+          "Generated ASCII art logo successfully",
           message_type = "success",
           verbose = verbose
         )
+        if (verbose) {
+          print(ascii_art)
+        }
       },
       error = function(e) {
         log_message(
-          "Figlet generation failed, using simple ASCII art",
+          "ASCII art logo generation failed, using simple logo",
           message_type = "warning",
           verbose = verbose
         )
@@ -112,13 +105,13 @@ add_pkg_file <- function(
   if (is.null(ascii_lines)) {
     ascii_lines <- c(
       paste0(
-        "  ", paste(rep("*", nchar(pkg_name) + 4), collapse = "")
+        "  ", paste0(rep("*", nchar(pkg_name) + 4))
       ),
       paste0(
         "  * ", pkg_name, " *"
       ),
       paste0(
-        "  ", paste(rep("*", nchar(pkg_name) + 4), collapse = "")
+        "  ", paste0(rep("*", nchar(pkg_name) + 4))
       )
     )
   }
@@ -136,12 +129,11 @@ add_pkg_file <- function(
   )
 
   output_file <- file.path(
-    output_dir,
-    paste0(pkg_name, "-package.R")
+    paste0("R/", pkg_name, "-package.R")
   )
   writeLines(file_content, output_file)
   log_message(
-    "Package file written to: {.file {output_file}}",
+    "Written to {.file {output_file}}",
     message_type = "success",
     verbose = verbose
   )
@@ -202,9 +194,14 @@ add_pkg_file <- function(
     "#' @export",
     "#' @examples",
     paste0("#' ", tolower(pkg_name), "_logo()"),
-    paste0(tolower(pkg_name), "_logo <- function(unicode = cli::is_utf8_output()) {"),
+    paste0(
+      tolower(pkg_name),
+      "_logo <- function(unicode = cli::is_utf8_output()) {"
+    ),
     "  logo <- c(",
-    paste0("    \"", ascii_with_numbers, "\""),
+    paste0(
+      "    \"", ascii_with_numbers, "\""
+    ),
     "  )",
     "",
     .generate_hexa(length(colors), colors, unicode),
@@ -215,14 +212,18 @@ add_pkg_file <- function(
     "    SIMPLIFY = FALSE",
     "  )",
     "",
-    paste0("  for (i in 0:", length(colors) - 1, ") {"),
+    paste0(
+      "  for (i in 0:", length(colors) - 1, ") {"
+    ),
     "    pat <- paste0(\"\\\\b\", i, \"\\\\b\")",
     "    logo <- sub(pat, col_hexa[[i + 1]], logo)",
     "  }",
     "",
     "  structure(",
     "    cli::col_blue(logo),",
-    paste0("    class = \"", tolower(pkg_name), "_logo\""),
+    paste0(
+      "    class = \"", tolower(pkg_name), "_logo\""
+    ),
     "  )",
     "}",
     "",
@@ -233,34 +234,52 @@ add_pkg_file <- function(
     "#'",
     "#' @return Print the ASCII logo",
     "#'",
-    paste0("#' @method print ", tolower(pkg_name), "_logo"),
+    paste0(
+      "#' @method print ", tolower(pkg_name), "_logo"
+    ),
     "#'",
     "#' @export",
     "#'",
-    paste0("print.", tolower(pkg_name), "_logo <- function(x, ...) {"),
+    paste0(
+      "print.", tolower(pkg_name), "_logo <- function(x, ...) {"
+    ),
     "  cat(x, ..., sep = \"\\n\")",
     "  invisible(x)",
     "}",
     "",
     ".onAttach <- function(libname, pkgname) {",
-    "  version <- utils::packageDescription(pkgname, fields = \"Version\")",
+    "  verbose <- thisutils::get_verbose()",
+    "  if (isTRUE(verbose)) {",
+    "    version <- utils::packageDescription(",
+    "      pkgname,",
+    "      fields = \"Version\"",
+    "    )",
     "",
-    "  msg <- paste0(",
-    "    strrep(\"-\", 60),",
-    "    \"\\n\",",
-    "    cli::col_blue(pkgname, \" version \", version),",
-    "    \"\\n\",",
-    "    cli::col_grey(\"This message can be suppressed by:\"),",
-    "    \"\\n\",",
+    "    msg <- paste0(",
+    "      strrep(\"-\", 60),",
+    "      \"\\n\",",
+    "      cli::col_blue(pkgname, \" version \", version),",
+    "      \"\\n\",",
+    "      cli::col_grey(\"This message can be suppressed by:\"),",
+    "      \"\\n\",",
     paste0(
-      "    cli::col_grey(\"  suppressPackageStartupMessages(library(", pkg_name, "))\"),"
+      "      cli::col_grey(\"  suppressPackageStartupMessages(library(",
+      pkg_name, "))\"),"
     ),
-    "    \"\\n\",",
-    "    strrep(\"-\", 60)",
-    "  )",
+    "      \"\\n\",",
+    paste0(
+      "      cli::col_grey(\"  or options(log_message.verbose = FALSE)\"),"
+    ),
+    "      \"\\n\",",
+    "      strrep(\"-\", 60)",
+    "    )",
     "",
-    paste0("  packageStartupMessage(", tolower(pkg_name), "_logo())"),
-    "  packageStartupMessage(msg)",
+    paste0(
+      "    packageStartupMessage(",
+      tolower(pkg_name), "_logo())"
+    ),
+    "    packageStartupMessage(msg)",
+    "  }",
     "}"
   )
 
@@ -274,8 +293,8 @@ add_pkg_file <- function(
     return("")
   }
 
-  top_numbers <- "    0        1      2           3    4"
-  bottom_numbers <- "  5             6      7      8       9"
+  top_numbers <- "          0          1        2             3     4"
+  bottom_numbers <- "      5               6      7        8          9"
 
   all_lines <- c(top_numbers, ascii_lines, bottom_numbers)
   result <- paste(all_lines, collapse = "\n")
@@ -328,12 +347,10 @@ add_pkg_file <- function(
     )
   }
 
-  if (verbose) {
-    log_message(
-      "Reading package information from file: ",
-      desc_file
-    )
-  }
+  log_message(
+    "Reading package information from {.file {desc_file}}",
+    verbose = verbose
+  )
 
   desc_lines <- readLines(desc_file, warn = FALSE)
   desc_content <- paste(desc_lines, collapse = "\n")
@@ -345,22 +362,13 @@ add_pkg_file <- function(
   )
   package_name <- if (package_match != -1) {
     trimws(
-      regmatches(
-        desc_content, package_match
-      )
-    )
-    trimws(
       sub(
         "Package:\\s*", "",
         regmatches(desc_content, package_match)
       )
     )
   } else {
-    log_message(
-      "Package name not found in DESCRIPTION file",
-      message_type = "warning"
-    )
-    return(NULL)
+    NULL
   }
 
   title_match <- regexpr(
@@ -375,13 +383,7 @@ add_pkg_file <- function(
       )
     )
   } else {
-    log_message(
-      "Title not found in DESCRIPTION file",
-      message_type = "warning"
-    )
-    return(
-      NULL
-    )
+    NULL
   }
 
   desc_match <- regexpr(
@@ -491,8 +493,11 @@ add_pkg_file <- function(
   }
 
   log_message(
-    "Information extracted for: {.pkg {package_name}}, ",
-    "Author: {.pkg {author_name}}, {.email {author_email}}",
+    "Package: {.pkg {package_name}}\n",
+    "Title: {.pkg {title}}\n",
+    "Description: {.pkg {description}}\n",
+    "Author: {.pkg {author_name}}, {.email {author_email}}\n",
+    "GitHub URL: {.url {github_url}}\n",
     message_type = "success",
     verbose = verbose
   )

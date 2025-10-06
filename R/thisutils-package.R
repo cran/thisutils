@@ -5,8 +5,7 @@
 #' @useDynLib thisutils
 #'
 #' @description
-#' Provides utility functions for data analysis and scientific computing.
-#' Includes functions for parallel processing, and other computational tasks to streamline workflows.
+#' Provides utility functions for data analysis and scientific computing. Includes functions for parallel processing, and other computational tasks to streamline workflows.
 #'
 #' @author Meng Xu (Maintainer), \email{mengxu98@qq.com}
 #'
@@ -35,13 +34,13 @@
 #' thisutils_logo()
 thisutils_logo <- function(unicode = cli::is_utf8_output()) {
   logo <- c(
-    "    0        1      2           3    4
-   __  __    _              __  _  __
-  / /_/ /_  (_)_____ __  __/ /_(_)/ /_____
- / __/ __ ./ // ___// / / / __/ // // ___/
-/ /_/ / / / /(__  )/ /_/ / /_/ // /(__  )
-.__/_/ /_/_//____/ .__,_/.__/_//_//____/
-  5             6      7      8       9"
+    "          0          1        2             3     4
+            __  __    _              __  _  __
+           / /_/ /_  (_)_____ __  __/ /_(_)/ /_____
+          / __/ __ ./ // ___// / / / __/ // // ___/
+         / /_/ / / / /(__  )/ /_/ / /_/ // /(__  )
+         .__/_/ /_/_//____/ .__,_/.__/_//_//____/
+      5               6      7        8          9"
   )
 
   hexa <- c("*", ".", "o", "*", ".", "o", "*", ".", "o", "*")
@@ -88,20 +87,28 @@ print.thisutils_logo <- function(x, ...) {
 }
 
 .onAttach <- function(libname, pkgname) {
-  version <- utils::packageDescription(pkgname, fields = "Version")
+  verbose <- thisutils::get_verbose()
+  if (isTRUE(verbose)) {
+    version <- utils::packageDescription(
+      pkgname,
+      fields = "Version"
+    )
 
-  msg <- paste0(
-    strrep("-", 60),
-    "\n",
-    cli::col_blue(pkgname, " version ", version),
-    "\n",
-    cli::col_grey("This message can be suppressed by:"),
-    "\n",
-    cli::col_grey("  suppressPackageStartupMessages(library(thisutils))"),
-    "\n",
-    strrep("-", 60)
-  )
+    msg <- paste0(
+      strrep("-", 60),
+      "\n",
+      cli::col_blue(pkgname, " version ", version),
+      "\n",
+      cli::col_grey("This message can be suppressed by:"),
+      "\n",
+      cli::col_grey("  suppressPackageStartupMessages(library(thisutils))"),
+      "\n",
+      cli::col_grey("  or options(log_message.verbose = FALSE)"),
+      "\n",
+      strrep("-", 60)
+    )
 
-  packageStartupMessage(thisutils_logo())
-  packageStartupMessage(msg)
+    packageStartupMessage(thisutils_logo())
+    packageStartupMessage(msg)
+  }
 }

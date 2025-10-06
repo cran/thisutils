@@ -1,7 +1,7 @@
 #' @title Print formatted message
 #'
 #' @description
-#' Integrate the message printing function with the `cli` package,
+#' Integrate the message printing function with the \href{https://cli.r-lib.org}{cli} package,
 #' and the [base::message] function.
 #' The message could be suppressed by [base::suppressMessages].
 #'
@@ -10,7 +10,7 @@
 #' @param verbose Whether to print the message.
 #' Default is `TRUE`.
 #' @param message_type Type of message.
-#' Could be choose one of `"info"`, `"success"`, `"warning"`, and `"error"`.
+#' Could be choose one of `"info"`, `"success"`, `"warning"`, `"error"`, and `"running"`.
 #' Default is `"info"`.
 #' @param cli_model Whether to use the `cli` package to print the message.
 #' Default is `TRUE`.
@@ -44,10 +44,11 @@
 #' When `TRUE`, each line gets the full formatting; when `FALSE`, only the first line gets the timestamp.
 #' Default is `FALSE`.
 #' @param timestamp_style Whether to apply the same text styling to the timestamp as the message text.
-#' When `TRUE`, timestamp formatting matches the message; when `FALSE`, timestamp keeps its default appearance.
+#' When `TRUE`, timestamp formatting matches the message;
+#' when `FALSE`, timestamp keeps its default appearance.
 #' Default is `TRUE`.
 #' @param .envir The environment to evaluate calls in.
-#' Default is `parent.frame()`.
+#' Default is [parent.frame].
 #' @param .frame The frame to use for error reporting.
 #' Default is `.envir`.
 #'
@@ -73,6 +74,11 @@
 #' log_message(
 #'   "Hello, world!",
 #'   message_type = "warning"
+#' )
+#'
+#' log_message(
+#'   "Processing data...",
+#'   message_type = "running"
 #' )
 #'
 #' log_message(
@@ -305,7 +311,9 @@
 log_message <- function(
     ...,
     verbose = TRUE,
-    message_type = c("info", "success", "warning", "error"),
+    message_type = c(
+      "info", "success", "warning", "error", "running"
+    ),
     cli_model = TRUE,
     level = 1,
     symbol = "  ",
@@ -320,7 +328,7 @@ log_message <- function(
     timestamp_style = TRUE,
     .envir = parent.frame(),
     .frame = .envir) {
-  verbose <- .get_verbose(verbose)
+  verbose <- get_verbose(verbose)
   message_type <- match.arg(message_type)
   msg <- .build_message(...)
 
@@ -366,26 +374,56 @@ log_message <- function(
   invisible(NULL)
 }
 
-.get_verbose <- function(verbose) {
-  verbose_option <- getOption("log_message.verbose", NULL)
+#' @title Get the verbose option
+#'
+#' @description
+#' Get the verbose option from the global options or the local argument.
+#'
+#' @param verbose The verbose option.
+#' Default is `NULL`, which means to get the verbose option from the global options.
+#' @return The verbose option.
+#' @export
+#'
+#' @examples
+#' get_verbose()
+#' get_verbose(verbose = FALSE)
+#' get_verbose(verbose = TRUE)
+#'
+#' options(log_message.verbose = FALSE)
+#' get_verbose()
+#' get_verbose(verbose = TRUE)
+#'
+#' options(log_message.verbose = TRUE)
+#' get_verbose()
+#'
+#' options(log_message.verbose = NULL)
+get_verbose <- function(verbose = NULL) {
+  verbose_global <- getOption("log_message.verbose", NULL)
 
-  if (is.null(verbose_option)) {
-    return(verbose)
-  }
-
-  if (!is.logical(verbose_option) || length(verbose_option) != 1) {
-    cli::cli_alert_warning(
-      "{.arg log_message.verbose} is not a logical value, set to {.pkg NULL}",
-      .envir = parent.frame()
-    )
-    cli::cli_alert_warning(
-      "or using {.code options(log_message.verbose = TRUE/FALSE)}",
-      .envir = parent.frame()
-    )
-    options(log_message.verbose = NULL)
-    verbose <- FALSE
+  if (is.null(verbose_global)) {
+    if (is.null(verbose)) {
+      verbose <- TRUE
+    } else {
+      if (!is.logical(verbose) || length(verbose) != 1) {
+        cli::cli_alert_warning(
+          "{.arg verbose} is not a logical value, set to {.pkg TRUE}"
+        )
+        verbose <- TRUE
+      }
+    }
   } else {
-    verbose <- verbose_option
+    if (!is.logical(verbose_global) || length(verbose_global) != 1) {
+      cli::cli_alert_warning(
+        "{.arg log_message.verbose} is not a logical value, set to {.pkg NULL}"
+      )
+      cli::cli_alert_warning(
+        "or using {.code options(log_message.verbose = TRUE/FALSE)}"
+      )
+      options(log_message.verbose = NULL)
+      verbose <- FALSE
+    } else {
+      verbose <- verbose_global
+    }
   }
 
   verbose
@@ -434,7 +472,7 @@ log_message <- function(
                                     caller_call) {
     if (!is.null(color_value) && !.check_color(color_value)) {
       error_msg <- paste0(
-        "{.arg ", param_name, "} must be a valid color name, ",
+        "{.arg {param_name}} must be a valid color name, ",
         "hexadecimal color code (e.g., '#000000'), or R color name"
       )
       cli::cli_abort(
@@ -455,8 +493,6 @@ log_message <- function(
       .envir = parent.frame()
     )
   }
-
-
 
   if (!is.null(text_style)) {
     valid_styles <- c(
@@ -480,7 +516,6 @@ log_message <- function(
   }
 }
 
-# Helper functions for message formatting
 .get_indent_part <- function(symbol, level) {
   if (symbol != "  ") {
     paste0(paste(rep(symbol, level), collapse = ""), " ")
@@ -534,7 +569,13 @@ log_message <- function(
     EXPR = message_type,
     "info" = cli::cli_alert_info(message, .envir = .envir),
     "success" = cli::cli_alert_success(message, .envir = .envir),
-    "warning" = cli::cli_alert_warning(message, .envir = .envir)
+    "warning" = cli::cli_alert_warning(message, .envir = .envir),
+    "running" = cli::cli_text(
+      paste0(
+        cli::make_ansi_style("orange")(cli::symbol$circle_dotted), " ", message
+      ),
+      .envir = .envir
+    )
   )
 }
 
@@ -680,7 +721,8 @@ log_message <- function(
       EXPR = message_type,
       "info" = "",
       "success" = "SUCCESS: ",
-      "warning" = "WARNING: "
+      "warning" = "WARNING: ",
+      "running" = "RUNNING: "
     )
     message(paste0(prefix, formatted_msg))
   }
@@ -887,6 +929,127 @@ log_message <- function(
     },
     error = function(e) {
       FALSE
+    }
+  )
+}
+
+#' @title Parse inline expressions
+#'
+#' @description
+#' Parse `{}` inline expressions and evaluate them in the current environment,
+#' while preserving outer formatting markers like `\{.val ...\}`.
+#'
+#' @param text A character string containing inline expressions to parse.
+#' @param env Environment in which to evaluate expressions.
+#' Defaults to the calling environment.
+#'
+#' @return
+#' A character string with expressions evaluated but formatting preserved.
+#'
+#' @export
+#'
+#' @examples
+#' i <- 1
+#' parse_inline_expressions(
+#'   "{.val {i}}"
+#' )
+#'
+#' x <- 5
+#' y <- 10
+#' parse_inline_expressions(
+#'   "{.pkg {x + y}}"
+#' )
+#'
+#' name <- "testing"
+#' name <- parse_inline_expressions(
+#'   "{.pkg {name}}"
+#' )
+#' name
+#'
+#' log_message(name)
+parse_inline_expressions <- function(
+    text,
+    env = parent.frame()) {
+  vapply(
+    text,
+    .replace_expressions,
+    character(1),
+    env = env,
+    USE.NAMES = FALSE
+  )
+}
+
+.replace_expressions <- function(text, env) {
+  pattern <- "\\{([^{}]+)\\}"
+
+  max_iterations <- 10
+  iteration <- 0
+
+  while (grepl(pattern, text) && iteration < max_iterations) {
+    iteration <- iteration + 1
+
+    matches <- gregexpr(pattern, text, perl = TRUE)[[1]]
+    if (matches[1] == -1) break
+
+    match_starts <- as.numeric(matches)
+    match_lengths <- attr(matches, "match.length")
+
+    order_idx <- order(match_starts, decreasing = TRUE)
+
+    for (i in order_idx) {
+      start_pos <- match_starts[i]
+      match_length <- match_lengths[i]
+
+      match <- substr(text, start_pos, start_pos + match_length - 1)
+      replacement <- .process_match(match, env)
+
+      text <- paste0(
+        substr(text, 1, start_pos - 1),
+        replacement,
+        substr(text, start_pos + match_length, nchar(text))
+      )
+    }
+  }
+
+  text
+}
+
+.process_match <- function(match, env) {
+  inner_content <- substr(match, 2, nchar(match) - 1)
+
+  if (grepl("^\\.[a-zA-Z_]+\\s+", inner_content)) {
+    .process_format_expression(inner_content, env)
+  } else {
+    .evaluate_expression(inner_content, env)
+  }
+}
+
+.process_format_expression <- function(content, env) {
+  parts <- strsplit(content, "\\s+", 2)[[1]]
+
+  if (length(parts) != 2) {
+    return(paste0("{", content, "}"))
+  }
+
+  format_tag <- parts[1]
+  format_content <- parts[2]
+
+  if (grepl("\\{", format_content)) {
+    return(paste0("{", content, "}"))
+  }
+
+  evaluated <- .evaluate_expression(format_content, env)
+  paste0("{", format_tag, " ", evaluated, "}")
+}
+
+.evaluate_expression <- function(expr, env) {
+  tryCatch(
+    {
+      result <- eval(parse(text = expr), envir = env)
+      as.character(result)
+    },
+    error = function(e) {
+      expr
     }
   )
 }
