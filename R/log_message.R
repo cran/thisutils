@@ -47,6 +47,9 @@
 #' When `TRUE`, timestamp formatting matches the message;
 #' when `FALSE`, timestamp keeps its default appearance.
 #' Default is `TRUE`.
+#' @param plain_text Whether to print only the text content.
+#' When `TRUE`, level, symbol, timestamp, and message type formatting are suppressed,
+#' but color and multiline settings still apply.
 #' @param .envir The environment to evaluate calls in.
 #' Default is [parent.frame].
 #' @param .frame The frame to use for error reporting.
@@ -308,6 +311,15 @@
 #'   log_message("{.val {x + 1}}")
 #' }
 #' fun()
+#'
+#'
+#' # print objects directly
+#' df <- data.frame(
+#'   x = 1:3,
+#'   y = letters[1:3],
+#'   z = c(" a", "b  ", "c")
+#' )
+#' log_message("Content:\n", df)
 log_message <- function(
     ...,
     verbose = TRUE,
@@ -326,6 +338,7 @@ log_message <- function(
       "[", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "] "
     ),
     timestamp_style = TRUE,
+    plain_text = FALSE,
     .envir = parent.frame(),
     .frame = .envir) {
   verbose <- get_verbose(verbose)
@@ -368,6 +381,7 @@ log_message <- function(
     symbol = symbol,
     multiline_indent = multiline_indent,
     timestamp_style = timestamp_style,
+    plain_text = plain_text,
     .envir = .envir
   )
 
@@ -436,7 +450,35 @@ get_verbose <- function(verbose = NULL) {
     return("")
   }
 
-  msg <- paste0(...)
+  processed_args <- lapply(
+    args, function(arg) {
+      if (is.character(arg) && length(arg) == 1) {
+        return(arg)
+      } else if (is.character(arg)) {
+        return(paste(arg, collapse = ""))
+      } else {
+        tryCatch(
+          {
+            output <- utils::capture.output(print(arg))
+            if (length(output) > 0) {
+              return(paste(output, collapse = "\n"))
+            } else {
+              return(as.character(arg))
+            }
+          },
+          error = function(e) {
+            return(as.character(arg))
+          }
+        )
+      }
+    }
+  )
+
+  msg <- paste0(processed_args, collapse = "")
+
+  if (length(msg) != 1) {
+    msg <- paste(msg, collapse = "")
+  }
 
   capitalize(msg)
 }
@@ -592,8 +634,42 @@ get_verbose <- function(verbose = NULL) {
     symbol,
     multiline_indent,
     timestamp_style,
+    plain_text,
     .envir = parent.frame()) {
-  if (cli_model && grepl("\n", msg)) {
+  if (plain_text) {
+    plain_msg <- if (length(msg) == 1) {
+      msg
+    } else {
+      paste(msg, collapse = "")
+    }
+
+    if (length(plain_msg) == 1 && grepl("\n", plain_msg)) {
+      lines <- strsplit(plain_msg, "\n", fixed = TRUE)[[1]]
+      for (line in lines) {
+        .plain_text_output(
+          text = line,
+          cli_model = cli_model,
+          text_color = text_color,
+          back_color = back_color,
+          text_style = text_style,
+          .envir = .envir
+        )
+      }
+    } else {
+      .plain_text_output(
+        text = plain_msg,
+        cli_model = cli_model,
+        text_color = text_color,
+        back_color = back_color,
+        text_style = text_style,
+        .envir = .envir
+      )
+    }
+
+    return(invisible(NULL))
+  }
+
+  if (cli_model && length(msg) == 1 && grepl("\n", msg)) {
     lines <- strsplit(msg, "\n", fixed = TRUE)[[1]]
 
     for (i in seq_along(lines)) {
@@ -767,6 +843,48 @@ get_verbose <- function(verbose = NULL) {
   }
 
   msg
+}
+
+.plain_text_output <- function(
+    text,
+    cli_model,
+    text_color,
+    back_color,
+    text_style,
+    .envir = parent.frame()) {
+  if (cli_model) {
+    if (!is.null(text_color) || !is.null(back_color) || !is.null(text_style)) {
+      text <- .style_formatting(
+        msg = text,
+        text_color = text_color,
+        back_color = back_color,
+        text_style = text_style,
+        cli_model = cli_model,
+        .envir = .envir
+      )
+    }
+    cli::cli_verbatim(text, .envir = .envir)
+  } else {
+    formatted_text <- tryCatch(
+      cli::format_inline(text, .envir = .envir),
+      error = function(e) {
+        text
+      }
+    )
+
+    if (!is.null(text_color) || !is.null(back_color) || !is.null(text_style)) {
+      formatted_text <- .style_formatting(
+        msg = formatted_text,
+        text_color = text_color,
+        back_color = back_color,
+        text_style = text_style,
+        cli_model = cli_model,
+        .envir = .envir
+      )
+    }
+
+    message(formatted_text)
+  }
 }
 
 .get_caller_call <- function(
