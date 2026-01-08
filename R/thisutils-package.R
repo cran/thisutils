@@ -5,7 +5,7 @@
 #' @useDynLib thisutils
 #'
 #' @description
-#' Provides utility functions for data analysis and scientific computing. Includes functions for parallel processing, and other computational tasks to streamline workflows.
+#' Provides utility functions for data analysis and scientific computing. Includes functions for logging, parallel processing, and other computational tasks to streamline workflows.
 #'
 #' @author Meng Xu (Maintainer), \email{mengxu98@qq.com}
 #'
@@ -25,6 +25,9 @@
 #' @md
 #' @param unicode Unicode symbols on UTF-8 platforms.
 #' Default is [cli::is_utf8_output].
+#'
+#' @return
+#' A character vector with class `thisutils_logo`.
 #'
 #' @references
 #' \url{https://github.com/tidyverse/tidyverse/blob/main/R/logo.R}

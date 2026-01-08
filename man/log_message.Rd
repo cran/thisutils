@@ -7,7 +7,7 @@
 log_message(
   ...,
   verbose = TRUE,
-  message_type = c("info", "success", "warning", "error", "running"),
+  message_type = c("info", "success", "warning", "error", "running", "ask"),
   cli_model = TRUE,
   level = 1,
   symbol = "  ",
@@ -17,7 +17,7 @@ log_message(
   multiline_indent = FALSE,
   timestamp = TRUE,
   timestamp_format = paste0("[", format(Sys.time(), "\%Y-\%m-\%d \%H:\%M:\%S"), "] "),
-  timestamp_style = TRUE,
+  timestamp_style = FALSE,
   plain_text = FALSE,
   .envir = parent.frame(),
   .frame = .envir
@@ -30,7 +30,9 @@ log_message(
 Default is \code{TRUE}.}
 
 \item{message_type}{Type of message.
-Could be choose one of \code{"info"}, \code{"success"}, \code{"warning"}, \code{"error"}, and \code{"running"}.
+Could be choose one of \code{"info"}, \code{"success"}, \code{"warning"}, \code{"error"}, \code{"running"}, and \code{"ask"}.
+When \code{"ask"} is used, the function will prompt the user for a Yes/No/Cancel response using \link[utils:askYesNo]{utils::askYesNo},
+and returns \code{TRUE} for Yes, \code{FALSE} for No, and \code{NA} for Cancel.
 Default is \code{"info"}.}
 
 \item{cli_model}{Whether to use the \code{cli} package to print the message.
@@ -76,7 +78,7 @@ Default is \code{"\%Y-\%m-\%d \%H:\%M:\%S"}.}
 \item{timestamp_style}{Whether to apply the same text styling to the timestamp as the message text.
 When \code{TRUE}, timestamp formatting matches the message;
 when \code{FALSE}, timestamp keeps its default appearance.
-Default is \code{TRUE}.}
+Default is \code{FALSE}.}
 
 \item{plain_text}{Whether to print only the text content.
 When \code{TRUE}, level, symbol, timestamp, and message type formatting are suppressed,
@@ -89,7 +91,7 @@ Default is \link{parent.frame}.}
 Default is \code{.envir}.}
 }
 \value{
-Formated message.
+Formated message, or a logical value (\code{TRUE}/\code{FALSE}/\code{NA}) if \code{message_type = "ask"}.
 }
 \description{
 Integrate the message printing function with the \href{https://cli.r-lib.org}{cli} package,
@@ -321,8 +323,7 @@ log_message(
 log_message(
   "Multi-line message\nwithout timestamp styling",
   text_color = "#669999",
-  text_style = c("bold", "italic"),
-  timestamp_style = FALSE
+  text_style = c("bold", "italic")
 )
 
 
@@ -355,6 +356,14 @@ df <- data.frame(
   z = c(" a", "b  ", "c")
 )
 log_message("Content:\n", df)
+
+# interactive prompt
+if (interactive()) {
+  log_message(
+    "Do you want to continue?",
+    message_type = "ask"
+  )
+}
 }
 \references{
 \url{https://cli.r-lib.org/articles/index.html}
