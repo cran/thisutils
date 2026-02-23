@@ -83,7 +83,6 @@ thisutils_logo <- function(unicode = cli::is_utf8_output()) {
 #' @method print thisutils_logo
 #'
 #' @export
-#'
 print.thisutils_logo <- function(x, ...) {
   cat(x, ..., sep = "\n")
   invisible(x)
@@ -92,16 +91,19 @@ print.thisutils_logo <- function(x, ...) {
 .onAttach <- function(libname, pkgname) {
   verbose <- thisutils::get_verbose()
   if (isTRUE(verbose)) {
-    version <- utils::packageDescription(
-      pkgname,
-      fields = "Version"
+    version <- utils::packageVersion(pkgname)
+    date <- utils::packageDate(pkgname)
+    url <- utils::packageDescription(
+      pkgname, fields = "URL"
     )
 
     msg <- paste0(
       cli::col_grey(strrep("-", 60)),
       "\n",
-      cli::col_blue(pkgname, " version ", version),
+      cli::col_blue("Version: ", version, " (", date, " update)"),
       "\n",
+      cli::col_blue("Website: ", cli::style_italic(url)),
+      "\n\n",
       cli::col_grey("This message can be suppressed by:"),
       "\n",
       cli::col_grey("  suppressPackageStartupMessages(library(thisutils))"),

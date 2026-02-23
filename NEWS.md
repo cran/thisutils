@@ -1,5 +1,38 @@
 # thisutils
 
+# thisutils 0.4.1
+
+* **func**:
+  * Remove `@examples` for `check_r()` function.
+
+# thisutils 0.4.0
+
+* **func**:
+  * Add `check_r()`: check and install R packages from CRAN, Bioconductor, or GitHub; supports version pinning (`pkg@version` or `pkg==version`) and optional `force` reinstall; uses `pak::pak()` for installation with configurable `lib` and `dependencies`.
+  * Add `remove_r()`: check and remove installed R packages from the given library; uses `pak::pkg_remove()`; skips packages that are not installed and reports success or failure per package.
+
+# thisutils 0.3.9
+
+* **func**:
+  * Fix `add_pkg_file()` dependency management: `cli` dependency is now added with correct comma separation, and both Imports and Suggests sections are automatically sorted alphabetically. The Suggests section is now enforced to follow Imports.
+
+# thisutils 0.3.8
+
+* **func**:
+  * Improve `add_pkg_file()` flow: better metadata extraction/logging from DESCRIPTION, and smarter logo generation fallback when figlet fails. Generated package files now include `@useDynLib` only when `src/` exists.
+  * Refresh startup messages: `.onAttach()` now shows package version, release date, and website link in both generated package files.
+
+# thisutils 0.3.7
+
+* **func**:
+  * Optimize `matrix_to_table()` C++ implementation: Improved dimnames handling using `Rf_getAttrib` and `R_DimNamesSymbol` for better compatibility. Enhanced `keep_zero = TRUE` logic to efficiently include all row/column combinations (including zeros) using `unordered_set` and `unordered_map` for optimized lookups.
+  * Improve `table_to_matrix()` C++ implementation: Enhanced sparse matrix construction by ensuring zero values are not added to sparse matrices. Improved dimnames setting using `Rf_setAttrib` and `R_DimNamesSymbol` for better compatibility.
+
+# thisutils 0.3.6
+
+* **func**:
+  * Fix warning about ‘ATTRIB’ from check results of *CRAN*.
+
 # thisutils 0.3.5
 
 * **func**:
