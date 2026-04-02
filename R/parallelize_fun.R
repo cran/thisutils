@@ -12,6 +12,8 @@
 #' Default is `FALSE`.
 #' @param throw_error Whether to print detailed error information for failed results.
 #' Default is `TRUE`.
+#' @param progress_bar_width Width of the verbose progress bar in characters.
+#' Default is `10L`.
 #'
 #' @return
 #' A list of computed results.
@@ -54,30 +56,38 @@
 #'   x^2
 #' }, throw_error = FALSE)
 parallelize_fun <- function(
-    x,
-    fun,
-    cores = 1,
-    export_fun = NULL,
-    clean_result = FALSE,
-    throw_error = TRUE,
-    timestamp_format = paste0(
-      "[", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "] "
-    ),
-    verbose = TRUE) {
+  x,
+  fun,
+  cores = 1,
+  export_fun = NULL,
+  clean_result = FALSE,
+  throw_error = TRUE,
+  progress_bar_width = 10L,
+  timestamp_format = paste0(
+    "[",
+    format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+    "] "
+  ),
+  verbose = TRUE
+) {
   total <- length(x)
   has_names <- !is.null(names(x)) && any(names(x) != "")
   is_vector <- is.vector(x) && !is.list(x)
   show_values <- !has_names && is_vector
 
   if (verbose) {
-    options(cli.progress_show_after = 0)
-    options(cli.progress_clear = FALSE)
+    old_cli_opts <- options(
+      cli.progress_show_after = 0,
+      cli.progress_clear = FALSE
+    )
+    on.exit(options(old_cli_opts), add = TRUE)
 
     pb <- cli::cli_progress_bar(
       format = paste0(
         "{cli::make_ansi_style('orange')(cli::pb_spin)} {timestamp_format}",
         "Running for {.pkg {cli::pb_status}}[{.pkg {cli::pb_current}}/{.pkg {cli::pb_total}}] ",
-        "{cli::pb_bar} {cli::pb_percent} | ETA: {.pkg {cli::pb_eta}}"
+        "{(parallel_progress_bar(cli::pb_current, cli::pb_total, progress_bar_width))} ",
+        "{cli::pb_percent} | ETA: {.pkg {cli::pb_eta}}"
       ),
       format_done = paste0(
         "{cli::col_green(cli::symbol$tick)} {timestamp_format}",
@@ -87,6 +97,16 @@ parallelize_fun <- function(
       total = total,
       clear = FALSE
     )
+  }
+
+  safe_call <- function(fun, ...) {
+    msg_con <- file(nullfile(), open = "w")
+    sink(msg_con, type = "message")
+    on.exit({
+      sink(type = "message")
+      close(msg_con)
+    })
+    suppressWarnings(fun(...))
   }
 
   if (cores == 1) {
@@ -100,8 +120,8 @@ parallelize_fun <- function(
       output_list <- vector("list", total)
 
       for (i in seq_along(x)) {
-        output_list[[i]] <- tryCatch(
-          fun(x[[i]]),
+        output_list[i] <- list(tryCatch(
+          safe_call(fun, x[[i]]),
           error = function(e) {
             structure(
               list(
@@ -112,7 +132,7 @@ parallelize_fun <- function(
               class = "parallelize_error"
             )
           }
-        )
+        ))
 
         if (has_names) {
           cli::cli_progress_update(id = pb, status = names(x)[i])
@@ -126,9 +146,10 @@ parallelize_fun <- function(
       cli::cli_progress_done(id = pb)
     } else {
       output_list <- base::lapply(
-        X = x, FUN = function(xi) {
+        X = x,
+        FUN = function(xi) {
           tryCatch(
-            fun(xi),
+            safe_call(fun, xi),
             error = function(e) {
               structure(
                 list(
@@ -145,7 +166,7 @@ parallelize_fun <- function(
   }
 
   if (cores > 1) {
-    cores <- .cores_detect(cores, total)
+    cores <- cores_detect(cores, total)
     doParallel::registerDoParallel(cores = cores)
 
     log_message(
@@ -160,7 +181,7 @@ parallelize_fun <- function(
         rep(1:cores, length.out = total)
       )
 
-      output_chunks <- vector("list", total)
+      output_list <- vector("list", total)
       for (chunk_idx in seq_along(chunks)) {
         chunk <- chunks[[chunk_idx]]
 
@@ -170,25 +191,26 @@ parallelize_fun <- function(
           i = chunk,
           .combine = "c",
           .export = export_fun
-        ) %dopar% {
-          list(
-            tryCatch(
-              fun(x[[i]]),
-              error = function(e) {
-                structure(
-                  list(
-                    error = e$message,
-                    index = i,
-                    input = x[[i]]
-                  ),
-                  class = "parallelize_error"
-                )
-              }
+        ) %dopar%
+          {
+            list(
+              tryCatch(
+                safe_call(fun, x[[i]]),
+                error = function(e) {
+                  structure(
+                    list(
+                      error = e$message,
+                      index = i,
+                      input = x[[i]]
+                    ),
+                    class = "parallelize_error"
+                  )
+                }
+              )
             )
-          )
-        }
+          }
 
-        output_chunks[[chunk_idx]] <- chunk_results
+        output_list[chunk] <- chunk_results
 
         if (has_names) {
           chunk_names <- names(x)[chunk]
@@ -220,29 +242,28 @@ parallelize_fun <- function(
       }
 
       cli::cli_progress_done(id = pb)
-
-      output_list <- unlist(output_chunks, recursive = FALSE)
     } else {
       i <- NULL
       "%dopar%" <- foreach::"%dopar%"
       output_list <- foreach::foreach(
         i = seq_along(x),
         .export = export_fun
-      ) %dopar% {
-        tryCatch(
-          fun(x[[i]]),
-          error = function(e) {
-            structure(
-              list(
-                error = e$message,
-                index = i,
-                input = x[[i]]
-              ),
-              class = "parallelize_error"
-            )
-          }
-        )
-      }
+      ) %dopar%
+        {
+          tryCatch(
+            safe_call(fun, x[[i]]),
+            error = function(e) {
+              structure(
+                list(
+                  error = e$message,
+                  index = i,
+                  input = x[[i]]
+                ),
+                class = "parallelize_error"
+              )
+            }
+          )
+        }
     }
 
     doParallel::stopImplicitCluster()
@@ -253,13 +274,11 @@ parallelize_fun <- function(
     timestamp_format = timestamp_format,
     verbose = verbose
   )
-  if (verbose) {
-    options(cli.progress_show_after = NULL)
-    options(cli.progress_clear = NULL)
-  }
 
   error_indices <- vapply(
-    output_list, function(x) inherits(x, "parallelize_error"), logical(1)
+    output_list,
+    function(x) inherits(x, "parallelize_error"),
+    logical(1)
   )
   if (any(error_indices)) {
     log_message(
@@ -273,20 +292,47 @@ parallelize_fun <- function(
       error_objects <- output_list[error_indices]
       error_inputs <- x[error_indices]
 
-      error_message <- mapply(
-        function(error_obj, input_val) {
-          parse_inline_expressions(
-            "{.val {input_val}}: {.emph {error_obj$error}}"
+      error_msgs <- vapply(
+        error_objects,
+        function(e) e$error,
+        character(1)
+      )
+      error_groups <- split(
+        seq_along(error_msgs),
+        error_msgs
+      )
+
+      group_lines <- vapply(
+        names(error_groups),
+        function(msg) {
+          idx <- error_groups[[msg]]
+          inputs <- error_inputs[idx]
+          n <- length(idx)
+          max_show <- 3
+          shown <- vapply(
+            utils::head(inputs, max_show),
+            function(v) {
+              parse_inline_expressions("{.val {v}}")
+            },
+            character(1)
           )
-        }, error_objects, error_inputs
+          task_str <- paste(shown, collapse = ", ")
+          if (n > max_show) {
+            task_str <- paste0(
+              task_str,
+              sprintf(" and %d more", n - max_show)
+            )
+          }
+          parse_inline_expressions(
+            paste0("{.emph ", msg, "} (", n, "): ", task_str)
+          )
+        },
+        character(1)
       )
-      error_message <- paste0(
-        error_message,
-        collapse = "\n"
-      )
+
       error_message <- paste0(
         "Error details:\n",
-        error_message
+        paste(group_lines, collapse = "\n")
       )
       log_message(
         error_message,
@@ -307,21 +353,74 @@ parallelize_fun <- function(
     }
   }
 
-  names(output_list) <- x
+  if (has_names) {
+    names(output_list) <- names(x)
+  } else if (is_vector) {
+    names(output_list) <- as.character(x)
+  }
 
   return(output_list)
 }
 
-.cores_detect <- function(
-    cores = 1,
-    num_session = NULL) {
+parallel_progress_bar <- function(
+  current,
+  total,
+  width = 10L
+) {
+  width <- suppressWarnings(as.integer(width[[1]]))
+  if (is.na(width) || width < 1L) {
+    width <- 10L
+  }
+
+  current <- suppressWarnings(as.numeric(current))
+  total <- suppressWarnings(as.numeric(total))
+
+  if (!is.finite(total) || total <= 0) {
+    return("")
+  }
+
+  if (!is.finite(current)) {
+    current <- 0
+  }
+
+  current <- max(0, min(current, total))
+  filled <- floor(width * current / total)
+  if (current >= total) {
+    filled <- width
+  }
+
+  empty <- max(width - filled, 0L)
+
+  paste0(
+    cli::col_green(strrep("\u25A0", filled)),
+    strrep(" ", empty)
+  )
+}
+
+cores_detect <- function(
+  cores = 1,
+  num_session = NULL
+) {
   if (is.null(num_session)) {
     return(1)
   }
-  cores <- min(
-    (parallel::detectCores(logical = FALSE) - 1),
-    cores,
-    num_session
+  detected_cores <- suppressWarnings(
+    parallel::detectCores(logical = FALSE)
   )
-  return(cores)
+  if (!is.finite(detected_cores) || detected_cores < 2) {
+    detected_cores <- 2L
+  }
+
+  max_cores <- max(1L, as.integer(detected_cores) - 1L)
+  requested_cores <- suppressWarnings(as.integer(cores[[1]]))
+  if (is.na(requested_cores) || requested_cores < 1L) {
+    requested_cores <- 1L
+  }
+
+  num_session <- suppressWarnings(as.integer(num_session[[1]]))
+  if (is.na(num_session) || num_session < 1L) {
+    num_session <- 1L
+  }
+
+  min(max_cores, requested_cores, num_session)
 }

@@ -70,23 +70,15 @@ invoke_fun <- function(
     ...,
     .env = rlang::caller_env()) {
   args <- c(.args, list(...))
-  .bury <- c(".fn", "")
-  if (rlang::is_null(.bury) || !length(args)) {
+  if (!length(args)) {
     if (rlang::is_scalar_character(.fn)) {
       .fn <- rlang::env_get(.env, .fn, inherit = TRUE)
     }
     call <- rlang::call2(.fn, !!!args)
     return(rlang::eval_bare(call, .env))
   }
-  if (!rlang::is_character(.bury, 2L)) {
-    log_message(
-      "{.arg .bury} must be a {.field character vector} of length 2",
-      message_type = "error"
-    )
-  }
-  arg_prefix <- .bury[[2]]
-  fn_nm <- .bury[[1]]
-  buried_nms <- paste0(arg_prefix, seq_along(args))
+  fn_nm <- ".fn"
+  buried_nms <- paste0("", seq_along(args))
   buried_args <- rlang::set_names(args, buried_nms)
   .env <- rlang::env(.env, !!!buried_args)
   args <- rlang::set_names(buried_nms, names(args))
@@ -146,7 +138,7 @@ capitalize <- function(x, force_tolower = FALSE) {
 #' @title Unnest a list-column
 #'
 #' @description
-#' Implement similar functions to the [tidyr::unnest] function.
+#' Implement similar functions to the `tidyr::unnest` function.
 #'
 #' @md
 #' @param data A data frame.
@@ -796,4 +788,45 @@ check_ci_env <- function() {
   }
 
   return(FALSE)
+}
+
+#' @title Check if the system is running on Apple Silicon
+#'
+#' @return
+#' A logical value.
+#'
+#' @export
+is_apple_silicon <- function() {
+  is_osx() &&
+    identical(tolower(Sys.info()[["machine"]]), "arm64")
+}
+
+#' @title Check if the operating system is Linux
+#'
+#' @return
+#' A logical value.
+#'
+#' @export
+is_linux <- function() {
+  identical(tolower(Sys.info()[["sysname"]]), "linux")
+}
+
+#' @title Check if the operating system is macOS
+#'
+#' @return
+#' A logical value.
+#'
+#' @export
+is_osx <- function() {
+  identical(tolower(Sys.info()[["sysname"]]), "darwin")
+}
+
+#' @title Check if the operating system is Windows
+#'
+#' @return
+#' A logical value.
+#'
+#' @export
+is_windows <- function() {
+  identical(.Platform$OS.type, "windows")
 }
