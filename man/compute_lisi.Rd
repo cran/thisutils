@@ -9,9 +9,6 @@ compute_lisi(
   meta_data,
   label_colnames,
   perplexity = 30,
-  nn_eps = 0,
-  use_rann = TRUE,
-  nn_method = c("auto", "rann", "fnn", "exact"),
   tol = 1e-05,
   max_iter = 50
 )
@@ -24,16 +21,6 @@ compute_lisi(
 \item{label_colnames}{Character vector of column names in \code{meta_data} to evaluate.}
 
 \item{perplexity}{Effective neighborhood size. Defaults to \code{30}.}
-
-\item{nn_eps}{Approximation factor passed to \link[RANN:nn2]{RANN::nn2} when \code{RANN} is available and \code{use_rann = TRUE}.
-Defaults to \code{0}.}
-
-\item{use_rann}{Whether to prefer \link[RANN:nn2]{RANN::nn2} over \code{FNN::get.knn} when \code{nn_method = "auto"} decides not to use the package's built-in exact C++ backend.
-Defaults to \code{TRUE}.}
-
-\item{nn_method}{Nearest-neighbor backend. Defaults to \code{"auto"},
-which prefers the package's exact C++ search only for very small problems.
-Larger inputs fall back to \code{RANN}, then \code{FNN}, and only use the exact backend as a last resort.}
 
 \item{tol}{Tolerance used in the binary search for the target perplexity.
 Defaults to \code{1e-5}.}
@@ -51,12 +38,12 @@ This is a clean-room reimplementation of the \code{immunogenomics/LISI}.
 \examples{
 set.seed(1)
 X <- rbind(
-  matrix(stats::rnorm(100, mean = -2), ncol = 5),
-  matrix(stats::rnorm(100, mean = 2), ncol = 5)
+  matrix(stats::rnorm(100, mean = -1), ncol = 2),
+  matrix(stats::rnorm(100, mean = 1), ncol = 2)
 )
 meta_data <- data.frame(
-  batch = rep(c("A", "B"), each = 20),
-  group = sample(c("g1", "g2"), 40, replace = TRUE)
+  batch = rep(c("A", "B"), each = 50),
+  group = sample(c("g1", "g2"), 100, replace = TRUE)
 )
 
 res <- compute_lisi(

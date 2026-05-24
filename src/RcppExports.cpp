@@ -10,31 +10,32 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// compute_simpson_index_cpp
-NumericVector compute_simpson_index_cpp(const NumericMatrix& D, const IntegerMatrix& knn_idx, const IntegerVector& batch_labels, double perplexity, double tol, int max_iter);
-RcppExport SEXP _thisutils_compute_simpson_index_cpp(SEXP DSEXP, SEXP knn_idxSEXP, SEXP batch_labelsSEXP, SEXP perplexitySEXP, SEXP tolSEXP, SEXP max_iterSEXP) {
+// compute_lisi_matrix
+NumericMatrix compute_lisi_matrix(const NumericMatrix& X, const IntegerMatrix& batch_labels, int n_neighbors, double perplexity, double tol, int max_iter);
+RcppExport SEXP _thisutils_compute_lisi_matrix(SEXP XSEXP, SEXP batch_labelsSEXP, SEXP n_neighborsSEXP, SEXP perplexitySEXP, SEXP tolSEXP, SEXP max_iterSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const NumericMatrix& >::type D(DSEXP);
-    Rcpp::traits::input_parameter< const IntegerMatrix& >::type knn_idx(knn_idxSEXP);
-    Rcpp::traits::input_parameter< const IntegerVector& >::type batch_labels(batch_labelsSEXP);
+    Rcpp::traits::input_parameter< const NumericMatrix& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const IntegerMatrix& >::type batch_labels(batch_labelsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_neighbors(n_neighborsSEXP);
     Rcpp::traits::input_parameter< double >::type perplexity(perplexitySEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
     Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
-    rcpp_result_gen = Rcpp::wrap(compute_simpson_index_cpp(D, knn_idx, batch_labels, perplexity, tol, max_iter));
+    rcpp_result_gen = Rcpp::wrap(compute_lisi_matrix(X, batch_labels, n_neighbors, perplexity, tol, max_iter));
     return rcpp_result_gen;
 END_RCPP
 }
 // lisi_exact_knn_cpp
-List lisi_exact_knn_cpp(const NumericMatrix& X, int k);
-RcppExport SEXP _thisutils_lisi_exact_knn_cpp(SEXP XSEXP, SEXP kSEXP) {
+List lisi_exact_knn_cpp(const NumericMatrix& X, int k, bool exclude_self);
+RcppExport SEXP _thisutils_lisi_exact_knn_cpp(SEXP XSEXP, SEXP kSEXP, SEXP exclude_selfSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const NumericMatrix& >::type X(XSEXP);
     Rcpp::traits::input_parameter< int >::type k(kSEXP);
-    rcpp_result_gen = Rcpp::wrap(lisi_exact_knn_cpp(X, k));
+    Rcpp::traits::input_parameter< bool >::type exclude_self(exclude_selfSEXP);
+    rcpp_result_gen = Rcpp::wrap(lisi_exact_knn_cpp(X, k, exclude_self));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -94,8 +95,8 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_thisutils_compute_simpson_index_cpp", (DL_FUNC) &_thisutils_compute_simpson_index_cpp, 6},
-    {"_thisutils_lisi_exact_knn_cpp", (DL_FUNC) &_thisutils_lisi_exact_knn_cpp, 2},
+    {"_thisutils_compute_lisi_matrix", (DL_FUNC) &_thisutils_compute_lisi_matrix, 6},
+    {"_thisutils_lisi_exact_knn_cpp", (DL_FUNC) &_thisutils_lisi_exact_knn_cpp, 3},
     {"_thisutils_drop_self_from_knn_cpp", (DL_FUNC) &_thisutils_drop_self_from_knn_cpp, 2},
     {"_thisutils_matrix_to_table", (DL_FUNC) &_thisutils_matrix_to_table, 5},
     {"_thisutils_split_indices", (DL_FUNC) &_thisutils_split_indices, 2},
