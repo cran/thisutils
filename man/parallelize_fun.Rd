@@ -13,7 +13,11 @@ parallelize_fun(
   throw_error = TRUE,
   progress_bar_width = 10L,
   timestamp_format = paste0("[", format(Sys.time(), "\%Y-\%m-\%d \%H:\%M:\%S"), "] "),
-  verbose = TRUE
+  verbose = TRUE,
+  backend = c("auto", "fork", "psock"),
+  timeout = Inf,
+  total_timeout = Inf,
+  seed = NULL
 )
 }
 \arguments{
@@ -21,7 +25,7 @@ parallelize_fun(
 
 \item{fun}{The function to be applied to each element.}
 
-\item{cores}{The number of cores to use for parallelization with \link[foreach:foreach]{foreach::foreach}.
+\item{cores}{The number of worker processes to use for parallelization.
 Default is \code{1}.}
 
 \item{export_fun}{The functions to export the function to workers.}
@@ -41,6 +45,25 @@ Default is \code{"\%Y-\%m-\%d \%H:\%M:\%S"}.}
 
 \item{verbose}{Whether to print the message.
 Default is \code{TRUE}.}
+
+\item{backend}{Parallel backend. \code{"auto"} uses PSOCK on every platform.
+Use \code{"fork"} to opt in to forked workers on supported systems.
+\code{"fork"} is unavailable on Windows. Prefer PSOCK in long-lived sessions
+that also use child-process managers such as callr or processx, because
+they can compete with R's fork-worker signal handler.}
+
+\item{timeout}{Maximum number of seconds that a parallel worker task may run.
+\code{Inf} disables task timeouts. This is ignored when execution uses one core.}
+
+\item{total_timeout}{Maximum number of seconds allowed for the complete call.
+\code{Inf} disables the overall deadline. In single-core mode the deadline is
+checked between inputs but cannot interrupt a function that is already
+running.}
+
+\item{seed}{Optional integer seed. When supplied, every input receives a
+deterministic independent L'Ecuyer-CMRG random-number stream, making results
+reproducible across worker counts and scheduling order. The caller's random
+number state is restored when the call finishes.}
 }
 \value{
 A list of computed results.

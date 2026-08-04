@@ -4,7 +4,7 @@
 #' @inheritParams log_message
 #' @param x A vector or list to apply over.
 #' @param fun The function to be applied to each element.
-#' @param cores The number of cores to use for parallelization with [foreach::foreach].
+#' @param cores The number of worker processes to use for parallelization.
 #' Default is `1`.
 #' @param export_fun The functions to export the function to workers.
 #' @param clean_result Whether to remove failed results from output.
@@ -14,6 +14,21 @@
 #' Default is `TRUE`.
 #' @param progress_bar_width Width of the verbose progress bar in characters.
 #' Default is `10L`.
+#' @param backend Parallel backend. `"auto"` uses PSOCK on every platform.
+#' Use `"fork"` to opt in to forked workers on supported systems.
+#' `"fork"` is unavailable on Windows. Prefer PSOCK in long-lived sessions
+#' that also use child-process managers such as callr or processx, because
+#' they can compete with R's fork-worker signal handler.
+#' @param timeout Maximum number of seconds that a parallel worker task may run.
+#' `Inf` disables task timeouts. This is ignored when execution uses one core.
+#' @param total_timeout Maximum number of seconds allowed for the complete call.
+#' `Inf` disables the overall deadline. In single-core mode the deadline is
+#' checked between inputs but cannot interrupt a function that is already
+#' running.
+#' @param seed Optional integer seed. When supplied, every input receives a
+#' deterministic independent L'Ecuyer-CMRG random-number stream, making results
+#' reproducible across worker counts and scheduling order. The caller's random
+#' number state is restored when the call finishes.
 #'
 #' @return
 #' A list of computed results.
@@ -68,9 +83,33 @@ parallelize_fun <- function(
     format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
     "] "
   ),
-  verbose = TRUE
+  verbose = TRUE,
+  backend = c("auto", "fork", "psock"),
+  timeout = Inf,
+  total_timeout = Inf,
+  seed = NULL
 ) {
+  call_started <- parallel_elapsed()
+  fun <- match.fun(fun)
+  backend <- match.arg(backend)
+  timeout <- parallel_validate_timeout(timeout, "timeout")
+  total_timeout <- parallel_validate_timeout(
+    total_timeout,
+    "total_timeout"
+  )
+  total_deadline <- call_started + total_timeout
+  seed <- parallel_validate_seed(seed)
   total <- length(x)
+  rng_streams <- NULL
+  if (!is.null(seed)) {
+    rng_state <- parallel_capture_rng_state()
+    on.exit(parallel_restore_rng_state(rng_state), add = TRUE)
+    rng_streams <- parallel_rng_streams(total, seed)
+  }
+  if (parallel_worker_depth() > 0L) {
+    cores <- 1L
+  }
+  cores <- cores_detect(cores, total)
   has_names <- !is.null(names(x)) && any(names(x) != "")
   is_vector <- is.vector(x) && !is.list(x)
   show_values <- !has_names && is_vector
@@ -122,6 +161,8 @@ parallelize_fun <- function(
       output_list <- vector("list", total)
 
       for (i in seq_along(x)) {
+        parallel_assert_total_time(total_deadline, total_timeout)
+        parallel_set_rng_stream(rng_streams, i)
         output_list[i] <- list(tryCatch(
           safe_call(fun, x[[i]]),
           error = function(e) {
@@ -135,6 +176,7 @@ parallelize_fun <- function(
             )
           }
         ))
+        parallel_assert_total_time(total_deadline, total_timeout)
 
         if (has_names) {
           cli::cli_progress_update(id = pb, status = names(x)[i])
@@ -148,63 +190,11 @@ parallelize_fun <- function(
       cli::cli_progress_done(id = pb)
     } else {
       output_list <- base::lapply(
-        X = x,
-        FUN = function(xi) {
-          tryCatch(
-            safe_call(fun, xi),
-            error = function(e) {
-              structure(
-                list(
-                  error = e$message,
-                  input = xi
-                ),
-                class = "parallelize_error"
-              )
-            }
-          )
-        }
-      )
-    }
-  }
-
-  if (cores > 1) {
-    cores <- cores_detect(cores, total)
-    log_message(
-      "Using {.pkg {cores}} cores",
-      timestamp_format = timestamp_format,
-      verbose = verbose
-    )
-
-    if (verbose) {
-      output_list <- parallel_collect_results(
-        x = x,
-        fun = fun,
-        total = total,
-        cores = cores,
-        export_fun = export_fun,
-        safe_call = safe_call,
-        progress_id = pb,
-        progress_env = progress_env,
-        has_names = has_names,
-        show_values = show_values
-      )
-      cli::cli_progress_done(id = pb)
-    } else {
-      doParallel::registerDoParallel(cores = cores)
-      on.exit(doParallel::stopImplicitCluster(), add = TRUE)
-
-      i <- NULL
-      "%dopar%" <- foreach::"%dopar%"
-      output_list <- foreach::foreach(
-        i = seq_along(x),
-        .export = export_fun,
-        .options.multicore = parallel_foreach_options(cores),
-        .options.snow = list(
-          preschedule = FALSE
-        )
-      ) %dopar%
-        {
-          tryCatch(
+        X = seq_along(x),
+        FUN = function(i) {
+          parallel_assert_total_time(total_deadline, total_timeout)
+          parallel_set_rng_stream(rng_streams, i)
+          result <- tryCatch(
             safe_call(fun, x[[i]]),
             error = function(e) {
               structure(
@@ -217,7 +207,39 @@ parallelize_fun <- function(
               )
             }
           )
+          parallel_assert_total_time(total_deadline, total_timeout)
+          result
         }
+      )
+    }
+  }
+
+  if (cores > 1) {
+    log_message(
+      "Using {.pkg {cores}} cores",
+      timestamp_format = timestamp_format,
+      verbose = verbose
+    )
+
+    output_list <- parallel_collect_results(
+      x = x,
+      fun = fun,
+      total = total,
+      cores = cores,
+      backend = backend,
+      timeout = timeout,
+      total_timeout = total_timeout,
+      total_deadline = total_deadline,
+      rng_streams = rng_streams,
+      export_fun = export_fun,
+      safe_call = safe_call,
+      progress_id = if (verbose) pb else NULL,
+      progress_env = if (verbose) progress_env else NULL,
+      has_names = has_names,
+      show_values = show_values
+    )
+    if (verbose) {
+      cli::cli_progress_done(id = pb)
     }
   }
 
@@ -307,7 +329,7 @@ parallelize_fun <- function(
 
   if (has_names) {
     names(output_list) <- names(x)
-  } else if (is_vector) {
+  } else if (is_vector && length(x) > 0L) {
     names(output_list) <- as.character(x)
   }
 
@@ -319,6 +341,11 @@ parallel_collect_results <- function(
   fun,
   total,
   cores,
+  backend,
+  timeout,
+  total_timeout,
+  total_deadline,
+  rng_streams,
   export_fun,
   safe_call,
   progress_id,
@@ -326,25 +353,16 @@ parallel_collect_results <- function(
   has_names,
   show_values
 ) {
-  if (.Platform$OS.type != "windows") {
-    return(parallel_collect_results_mc(
-      x = x,
-      fun = fun,
-      total = total,
-      cores = cores,
-      safe_call = safe_call,
-      progress_id = progress_id,
-      progress_env = progress_env,
-      has_names = has_names,
-      show_values = show_values
-    ))
-  }
-
   parallel_collect_results_cluster(
     x = x,
     fun = fun,
     total = total,
     cores = cores,
+    backend = backend,
+    timeout = timeout,
+    total_timeout = total_timeout,
+    total_deadline = total_deadline,
+    rng_streams = rng_streams,
     export_fun = export_fun,
     safe_call = safe_call,
     progress_id = progress_id,
@@ -354,90 +372,16 @@ parallel_collect_results <- function(
   )
 }
 
-parallel_collect_results_mc <- function(
-  x,
-  fun,
-  total,
-  cores,
-  safe_call,
-  progress_id,
-  progress_env,
-  has_names,
-  show_values
-) {
-  parallel_worker_task <- function(i) {
-    tryCatch(
-      safe_call(fun, x[[i]]),
-      error = function(e) {
-        structure(
-          list(
-            error = e$message,
-            index = i,
-            input = x[[i]]
-          ),
-          class = "parallelize_error"
-        )
-      }
-    )
-  }
-
-  output_list <- vector("list", total)
-  jobs <- list()
-  job_indices <- list()
-  next_index <- 1L
-  completed <- 0L
-
-  launch_job <- function(task_index) {
-    job <- parallel::mcparallel(
-      parallel_worker_task(task_index),
-      silent = TRUE
-    )
-    job_pid <- as.character(job$pid)
-    jobs[[job_pid]] <<- job
-    job_indices[[job_pid]] <<- task_index
-  }
-
-  while (next_index <= min(cores, total)) {
-    launch_job(next_index)
-    next_index <- next_index + 1L
-  }
-
-  while (completed < total) {
-    result <- parallel::mccollect(jobs, wait = FALSE)
-    if (is.null(result)) {
-      Sys.sleep(0.01)
-      next
-    }
-
-    for (pid in names(result)) {
-      task_index <- job_indices[[pid]]
-      output_list[task_index] <- list(result[[pid]])
-      jobs[[pid]] <- NULL
-      job_indices[[pid]] <- NULL
-      completed <- completed + 1L
-
-      cli::cli_progress_update(
-        id = progress_id,
-        inc = 1L,
-        status = progress_status(x, task_index, has_names, show_values),
-        .envir = progress_env
-      )
-
-      if (next_index <= total) {
-        launch_job(next_index)
-        next_index <- next_index + 1L
-      }
-    }
-  }
-
-  output_list
-}
-
 parallel_collect_results_cluster <- function(
   x,
   fun,
   total,
   cores,
+  backend,
+  timeout,
+  total_timeout,
+  total_deadline,
+  rng_streams,
   export_fun,
   safe_call,
   progress_id,
@@ -445,91 +389,521 @@ parallel_collect_results_cluster <- function(
   has_names,
   show_values
 ) {
-  cl <- make_parallel_cluster(cores)
-  on.exit(parallel::stopCluster(cl), add = TRUE)
-
-  parallel_worker_task <- function(i) {
-    tryCatch(
-      safe_call(fun, x[[i]]),
-      error = function(e) {
-        structure(
-          list(
-            error = e$message,
-            index = i,
-            input = x[[i]]
-          ),
-          class = "parallelize_error"
-        )
-      }
+  backend <- parallel_backend(backend)
+  context_id <- NULL
+  if (backend == "fork") {
+    context_id <- paste0(
+      "context_",
+      length(ls(envir = .parallel_fork_contexts, all.names = TRUE)) + 1L
     )
+    context <- new.env(parent = emptyenv())
+    context$x <- x
+    context$fun <- fun
+    context$safe_call <- safe_call
+    context$rng_streams <- rng_streams
+    .parallel_fork_contexts[[context_id]] <- context
+    on.exit({
+      if (exists(context_id, envir = .parallel_fork_contexts, inherits = FALSE)) {
+        rm(list = context_id, envir = .parallel_fork_contexts)
+      }
+    }, add = TRUE)
   }
 
-  parallel::clusterExport(
-    cl = cl,
-    varlist = "parallel_worker_task",
-    envir = environment()
+  cl <- make_parallel_cluster(cores, backend)
+  worker_pids <- integer()
+  force_cleanup <- TRUE
+  on.exit(
+    terminate_parallel_cluster(cl, worker_pids, force = force_cleanup),
+    add = TRUE
   )
+  worker_pids <- unlist(parallel::clusterCall(cl, Sys.getpid), use.names = FALSE)
 
-  if (!is.null(export_fun) && length(export_fun) > 0) {
-    export_env <- environment(fun)
-    if (is.null(export_env)) {
-      export_env <- parent.frame()
+  if (backend == "fork") {
+    dispatch_task <- parallel_fork_worker_task
+    worker_args <- function(indices) list(context_id, indices)
+  } else {
+    worker_context <- parallel_with_worker_context
+    worker_task <- function(indices) {
+      lapply(
+        indices,
+        function(i) {
+          worker_context({
+            if (!is.null(rng_streams)) {
+              assign(".Random.seed", rng_streams[[i]], envir = globalenv())
+            }
+            tryCatch(
+              safe_call(fun, x[[i]]),
+              error = function(e) {
+                structure(
+                  list(
+                    error = e$message,
+                    index = i,
+                    input = x[[i]]
+                  ),
+                  class = "parallelize_error"
+                )
+              }
+            )
+          })
+        }
+      )
     }
+    worker_args <- function(indices) list(indices)
+
     parallel::clusterExport(
       cl = cl,
-      varlist = export_fun,
-      envir = export_env
+      varlist = "worker_task",
+      envir = environment()
     )
+    parallel::clusterExport(
+      cl = cl,
+      varlist = c(
+        "parallelize_fun",
+        "parallel_worker_depth",
+        "parallel_with_worker_context",
+        "parallel_validate_timeout",
+        "parallel_validate_seed",
+        "parallel_capture_rng_state",
+        "parallel_restore_rng_state",
+        "parallel_rng_streams",
+        "parallel_set_rng_stream",
+        "parallel_assert_total_time",
+        "parallel_total_timeout_error"
+      ),
+      envir = environment(parallelize_fun)
+    )
+    dispatch_task <- parallel_psock_worker_task
+
+    if (!is.null(export_fun) && length(export_fun) > 0) {
+      export_env <- environment(fun)
+      if (is.null(export_env)) {
+        export_env <- parent.frame()
+      }
+      parallel::clusterExport(
+        cl = cl,
+        varlist = export_fun,
+        envir = export_env
+      )
+    }
   }
 
   output_list <- vector("list", total)
-  next_index <- 1L
-  active_workers <- min(length(cl), total)
+  task_chunks <- parallel_task_chunks(total, cores, timeout)
+  total_jobs <- length(task_chunks)
+  job_started <- rep(NA_real_, total_jobs)
+  next_job <- 1L
+  active_workers <- min(length(cl), total_jobs)
 
-  sendCall <- get_namespace_fun("parallel", "sendCall")
+  send_call <- parallel_scheduler_fun("sendCall")
+  receive_result <- parallel_scheduler_fun("recvOneResult")
+  parallel_assert_total_time(total_deadline, total_timeout)
   for (worker_idx in seq_len(active_workers)) {
-    sendCall(
+    send_call(
       con = cl[[worker_idx]],
-      fun = parallel_worker_task,
-      args = list(next_index),
-      tag = next_index
+      fun = dispatch_task,
+      args = worker_args(task_chunks[[next_job]]),
+      tag = next_job
     )
-    next_index <- next_index + 1L
+    job_started[[next_job]] <- parallel_elapsed()
+    next_job <- next_job + 1L
   }
 
-  completed <- 0L
-  while (completed < total) {
-    result <- get_namespace_fun("parallel", "recvOneResult")(cl)
-    task_index <- as.integer(result$tag)
-    output_list[task_index] <- list(result$value)
-    completed <- completed + 1L
-
-    cli::cli_progress_update(
-      id = progress_id,
-      inc = 1L,
-      status = progress_status(x, task_index, has_names, show_values),
-      .envir = progress_env
+  completed_jobs <- 0L
+  while (completed_jobs < total_jobs) {
+    active_jobs <- which(!is.na(job_started))
+    deadlines <- stats::setNames(
+      job_started[active_jobs] + timeout,
+      active_jobs
     )
+    result <- receive_parallel_result(
+      cl,
+      deadlines = deadlines,
+      timeout = timeout,
+      total_deadline = total_deadline,
+      total_timeout = total_timeout,
+      worker_pids = worker_pids,
+      receive_result = receive_result
+    )
+    job_index <- as.integer(result$tag)
+    task_indices <- task_chunks[[job_index]]
+    task_values <- result$value
+    if (!is.list(task_values) || length(task_values) != length(task_indices)) {
+      stop(parallel_worker_error(cause = "Worker returned an invalid task batch."))
+    }
+    output_list[task_indices] <- task_values
+    job_started[[job_index]] <- NA_real_
+    completed_jobs <- completed_jobs + 1L
 
-    if (next_index <= total) {
-      sendCall(
+    if (!is.null(progress_id)) {
+      for (task_index in task_indices) {
+        cli::cli_progress_update(
+          id = progress_id,
+          inc = 1L,
+          status = progress_status(x, task_index, has_names, show_values),
+          .envir = progress_env
+        )
+      }
+    }
+
+    if (next_job <= total_jobs) {
+      send_call(
         con = cl[[result$node]],
-        fun = parallel_worker_task,
-        args = list(next_index),
-        tag = next_index
+        fun = dispatch_task,
+        args = worker_args(task_chunks[[next_job]]),
+        tag = next_job
       )
-      next_index <- next_index + 1L
+      job_started[[next_job]] <- parallel_elapsed()
+      next_job <- next_job + 1L
     }
   }
 
+  force_cleanup <- FALSE
   output_list
 }
 
-parallel_foreach_options <- function(cores) {
+parallel_task_chunks <- function(total, cores, timeout) {
+  if (total < 1L) {
+    return(list())
+  }
+  if (is.finite(timeout)) {
+    return(as.list(seq_len(total)))
+  }
+
+  jobs <- min(total, max(1L, as.integer(cores) * 4L))
+  parallel::splitIndices(total, jobs)
+}
+
+receive_parallel_result <- function(
+  cl,
+  deadlines = numeric(),
+  timeout = Inf,
+  total_deadline = Inf,
+  total_timeout = Inf,
+  worker_pids = integer(),
+  receive_result = parallel_scheduler_fun("recvOneResult"),
+  poll_interval = 0.1
+) {
+  connections <- lapply(cl, `[[`, "con")
+  repeat {
+    now <- parallel_elapsed()
+    next_task_deadline <- if (length(deadlines)) min(deadlines) else Inf
+    next_deadline <- min(next_task_deadline, total_deadline)
+    wait <- min(poll_interval, max(0, next_deadline - now))
+
+    if (any(base::socketSelect(connections, timeout = wait))) {
+      return(tryCatch(
+        receive_result(cl),
+        error = function(e) {
+          dead_workers <- worker_pids[!vapply(
+            worker_pids,
+            parallel_process_alive,
+            logical(1)
+          )]
+          stop(parallel_worker_error(dead_workers, conditionMessage(e)))
+        }
+      ))
+    }
+
+    dead_workers <- worker_pids[!vapply(
+      worker_pids,
+      parallel_process_alive,
+      logical(1)
+    )]
+    if (length(dead_workers)) {
+      stop(parallel_worker_error(dead_workers))
+    }
+
+    now <- parallel_elapsed()
+    if (now >= total_deadline) {
+      stop(parallel_total_timeout_error(total_timeout))
+    }
+    timed_out <- names(deadlines)[deadlines <= now]
+    if (length(timed_out)) {
+      stop(parallel_timeout_error(as.integer(timed_out), timeout))
+    }
+  }
+}
+
+parallel_scheduler_fun <- function(name) {
+  fun <- get_namespace_fun("parallel", name)
+  if (!is.function(fun)) {
+    stop(
+      sprintf(
+        "This R version does not provide the parallel scheduler function %s.",
+        name
+      ),
+      call. = FALSE
+    )
+  }
+  fun
+}
+
+parallel_validate_timeout <- function(value, name) {
+  value <- suppressWarnings(as.numeric(value)[1L])
+  if (!length(value) || is.na(value) || value <= 0) {
+    stop(
+      sprintf("%s must be a positive number or Inf.", name),
+      call. = FALSE
+    )
+  }
+  value
+}
+
+parallel_validate_seed <- function(seed) {
+  if (is.null(seed)) {
+    return(NULL)
+  }
+  if (length(seed) != 1L || !is.numeric(seed)) {
+    stop("seed must be NULL or a single integer.", call. = FALSE)
+  }
+  value <- suppressWarnings(as.integer(seed)[1L])
+  numeric_value <- suppressWarnings(as.numeric(seed)[1L])
+  if (
+    !length(value) ||
+      is.na(value) ||
+      !is.finite(numeric_value) ||
+      numeric_value != value
+  ) {
+    stop("seed must be NULL or a single integer.", call. = FALSE)
+  }
+  value
+}
+
+parallel_capture_rng_state <- function() {
+  has_seed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
   list(
-    preschedule = FALSE,
-    cores = cores
+    kind = RNGkind(),
+    has_seed = has_seed,
+    seed = if (has_seed) {
+      get(".Random.seed", envir = globalenv(), inherits = FALSE)
+    } else {
+      NULL
+    }
   )
+}
+
+parallel_restore_rng_state <- function(state) {
+  do.call(RNGkind, as.list(state$kind))
+  if (isTRUE(state$has_seed)) {
+    assign(".Random.seed", state$seed, envir = globalenv())
+  } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    rm(".Random.seed", envir = globalenv())
+  }
+  invisible(NULL)
+}
+
+parallel_rng_streams <- function(total, seed) {
+  state <- parallel_capture_rng_state()
+  on.exit(parallel_restore_rng_state(state), add = TRUE)
+
+  RNGkind("L'Ecuyer-CMRG")
+  set.seed(seed)
+  streams <- vector("list", total)
+  current <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  for (i in seq_len(total)) {
+    streams[[i]] <- current
+    current <- parallel::nextRNGStream(current)
+  }
+  streams
+}
+
+parallel_set_rng_stream <- function(streams, index) {
+  if (!is.null(streams)) {
+    assign(".Random.seed", streams[[index]], envir = globalenv())
+  }
+  invisible(NULL)
+}
+
+parallel_assert_total_time <- function(deadline, timeout) {
+  if (parallel_elapsed() >= deadline) {
+    stop(parallel_total_timeout_error(timeout))
+  }
+  invisible(NULL)
+}
+
+parallel_elapsed <- function() {
+  unname(proc.time()[["elapsed"]])
+}
+
+parallel_worker_depth <- function() {
+  depth <- suppressWarnings(
+    as.integer(getOption("thisutils.parallel.depth", 0L))[1L]
+  )
+  if (!length(depth) || is.na(depth) || depth < 0L) {
+    return(0L)
+  }
+  depth
+}
+
+parallel_with_worker_context <- function(code) {
+  old_options <- options(
+    thisutils.parallel.depth = parallel_worker_depth() + 1L
+  )
+  on.exit(options(old_options), add = TRUE)
+  force(code)
+}
+
+parallel_process_alive <- function(pid) {
+  handle <- tryCatch(
+    ps::ps_handle(as.integer(pid)),
+    error = function(e) NULL
+  )
+  if (is.null(handle) || !isTRUE(tryCatch(
+    ps::ps_is_running(handle),
+    error = function(e) FALSE
+  ))) {
+    return(FALSE)
+  }
+
+  status <- tryCatch(ps::ps_status(handle), error = function(e) NA_character_)
+  !status %in% c("dead", "zombie")
+}
+
+parallel_timeout_error <- function(indices, timeout) {
+  structure(
+    list(
+      message = sprintf(
+        "Parallel task%s %s timed out after %s seconds.",
+        if (length(indices) == 1L) "" else "s",
+        paste(indices, collapse = ", "),
+        format(timeout, trim = TRUE)
+      ),
+      call = NULL,
+      indices = indices,
+      timeout = timeout
+    ),
+    class = c("parallelize_timeout", "error", "condition")
+  )
+}
+
+parallel_total_timeout_error <- function(timeout) {
+  structure(
+    list(
+      message = sprintf(
+        "Parallel call exceeded the total timeout of %s seconds.",
+        format(timeout, trim = TRUE)
+      ),
+      call = NULL,
+      timeout = timeout
+    ),
+    class = c("parallelize_total_timeout", "error", "condition")
+  )
+}
+
+parallel_worker_error <- function(pids = integer(), cause = NULL) {
+  worker_text <- if (length(pids)) {
+    sprintf(
+      "Parallel worker%s %s exited before returning a result.",
+      if (length(pids) == 1L) "" else "s",
+      paste(pids, collapse = ", ")
+    )
+  } else {
+    "A parallel worker failed before returning a result."
+  }
+  if (!is.null(cause) && nzchar(cause)) {
+    worker_text <- paste(worker_text, cause)
+  }
+
+  structure(
+    list(
+      message = worker_text,
+      call = NULL,
+      pids = pids,
+      cause = cause
+    ),
+    class = c("parallelize_worker_error", "error", "condition")
+  )
+}
+
+terminate_parallel_cluster <- function(cl, worker_pids, force = FALSE) {
+  on.exit({
+    close_parallel_cluster_connections(cl)
+    remove_parallel_cluster_tempdir(cl)
+  }, add = TRUE)
+
+  if (isTRUE(force)) {
+    parallel_signal_workers(worker_pids, tools::SIGTERM)
+    remaining <- parallel_wait_for_workers(worker_pids, timeout = 0.2)
+    final_signal <- if (.Platform$OS.type == "windows") {
+      tools::SIGTERM
+    } else {
+      tools::SIGKILL
+    }
+    parallel_signal_workers(remaining, final_signal)
+    parallel_wait_for_workers(remaining, timeout = 1)
+  }
+
+  try(parallel::stopCluster(cl), silent = TRUE)
+  invisible(NULL)
+}
+
+parallel_wait_for_workers <- function(worker_pids, timeout) {
+  worker_pids <- unique(as.integer(worker_pids))
+  worker_pids <- worker_pids[!is.na(worker_pids)]
+  deadline <- parallel_elapsed() + timeout
+
+  repeat {
+    remaining <- worker_pids[vapply(
+      worker_pids,
+      parallel_process_alive,
+      logical(1)
+    )]
+    if (!length(remaining) || parallel_elapsed() >= deadline) {
+      return(remaining)
+    }
+    Sys.sleep(0.01)
+  }
+}
+
+close_parallel_cluster_connections <- function(cl) {
+  for (worker in cl) {
+    connection <- tryCatch(
+      worker[["con"]],
+      error = function(e) NULL
+    )
+    if (!is.null(connection)) {
+      try(close(connection), silent = TRUE)
+    }
+  }
+  invisible(NULL)
+}
+
+parallel_signal_workers <- function(pids, signal) {
+  for (pid in unique(as.integer(pids))) {
+    try(tools::pskill(pid, signal), silent = TRUE)
+  }
+  invisible(NULL)
+}
+
+.parallel_fork_contexts <- new.env(parent = emptyenv())
+
+parallel_fork_worker_task <- function(context_id, indices) {
+  context <- .parallel_fork_contexts[[context_id]]
+  lapply(
+    indices,
+    function(i) {
+      parallel_with_worker_context({
+        parallel_set_rng_stream(context$rng_streams, i)
+        tryCatch(
+          context$safe_call(context$fun, context$x[[i]]),
+          error = function(e) {
+            structure(
+              list(
+                error = e$message,
+                index = i,
+                input = context$x[[i]]
+              ),
+              class = "parallelize_error"
+            )
+          }
+        )
+      })
+    }
+  )
+}
+
+parallel_psock_worker_task <- function(indices) {
+  get("worker_task", envir = globalenv(), inherits = FALSE)(indices)
 }
 
 progress_status <- function(x, index, has_names, show_values) {
@@ -544,12 +918,84 @@ progress_status <- function(x, index, has_names, show_values) {
   NULL
 }
 
-make_parallel_cluster <- function(cores) {
-  if (.Platform$OS.type == "windows") {
-    return(parallel::makePSOCKcluster(cores))
+parallel_backend <- function(backend = c("auto", "fork", "psock")) {
+  backend <- match.arg(backend)
+  if (backend == "fork" && .Platform$OS.type == "windows") {
+    stop(
+      "The fork backend is unavailable on Windows; use backend = \"psock\".",
+      call. = FALSE
+    )
+  }
+  if (backend == "auto") {
+    return("psock")
   }
 
-  parallel::makeForkCluster(cores)
+  backend
+}
+
+make_parallel_cluster <- function(cores, backend = parallel_backend()) {
+  if (backend == "psock") {
+    return(make_parallel_psock_cluster(cores))
+  }
+
+  parallel::makeForkCluster(cores, outfile = nullfile())
+}
+
+make_parallel_psock_cluster <- function(cores) {
+  if (.Platform$OS.type != "windows") {
+    return(parallel::makePSOCKcluster(cores, outfile = nullfile()))
+  }
+
+  launch_dir <- tempfile("thisutils-psock-", tmpdir = tempdir())
+  if (!dir.create(launch_dir)) {
+    stop("Unable to create a temporary directory for PSOCK workers.", call. = FALSE)
+  }
+  complete <- FALSE
+  on.exit({
+    if (!complete) {
+      unlink(launch_dir, recursive = TRUE, force = TRUE)
+    }
+  }, add = TRUE)
+
+  old_tmpdir <- Sys.getenv("TMPDIR", unset = NA_character_)
+  Sys.setenv(TMPDIR = launch_dir)
+  on.exit({
+    if (is.na(old_tmpdir)) {
+      Sys.unsetenv("TMPDIR")
+    } else {
+      Sys.setenv(TMPDIR = old_tmpdir)
+    }
+  }, add = TRUE)
+
+  cl <- parallel::makePSOCKcluster(cores, outfile = nullfile())
+  attr(cl, "thisutils.psock.tempdir") <- launch_dir
+  complete <- TRUE
+  cl
+}
+
+remove_parallel_cluster_tempdir <- function(cl) {
+  launch_dir <- attr(cl, "thisutils.psock.tempdir", exact = TRUE)
+  if (is.null(launch_dir) || length(launch_dir) != 1L || is.na(launch_dir)) {
+    return(invisible(NULL))
+  }
+
+  launch_dir <- normalizePath(launch_dir, winslash = "/", mustWork = FALSE)
+  session_dir <- normalizePath(tempdir(), winslash = "/", mustWork = FALSE)
+  if (
+    !identical(dirname(launch_dir), session_dir) ||
+      !startsWith(basename(launch_dir), "thisutils-psock-")
+  ) {
+    return(invisible(NULL))
+  }
+
+  for (attempt in seq_len(10L)) {
+    unlink(launch_dir, recursive = TRUE, force = TRUE)
+    if (!dir.exists(launch_dir)) {
+      break
+    }
+    Sys.sleep(0.02)
+  }
+  invisible(NULL)
 }
 
 parallel_progress_bar <- function(
@@ -602,13 +1048,13 @@ cores_detect <- function(
   }
 
   max_cores <- max(1L, as.integer(detected_cores) - 1L)
-  requested_cores <- suppressWarnings(as.integer(cores[[1]]))
-  if (is.na(requested_cores) || requested_cores < 1L) {
+  requested_cores <- suppressWarnings(as.integer(cores)[1L])
+  if (!length(requested_cores) || is.na(requested_cores) || requested_cores < 1L) {
     requested_cores <- 1L
   }
 
-  num_session <- suppressWarnings(as.integer(num_session[[1]]))
-  if (is.na(num_session) || num_session < 1L) {
+  num_session <- suppressWarnings(as.integer(num_session)[1L])
+  if (!length(num_session) || is.na(num_session) || num_session < 1L) {
     num_session <- 1L
   }
 

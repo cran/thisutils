@@ -7,8 +7,12 @@
 check_r(
   packages,
   lib = .libPaths()[1],
-  dependencies = TRUE,
+  dependencies = NA,
   force = FALSE,
+  install = TRUE,
+  timeout = Inf,
+  load = FALSE,
+  cores = NULL,
   verbose = TRUE
 )
 }
@@ -19,11 +23,28 @@ By default, the package name is extracted according to the \code{packages} param
 
 \item{lib}{The location of the library directories where to install the packages.}
 
-\item{dependencies}{Whether to install dependencies of the packages.
-Default is \code{TRUE}.}
+\item{dependencies}{Which dependencies to install.
+Passed to \link[pak:pkg_install]{pak::pkg_install}.
+Default is \code{NA}, auto install hard dependencies: \emph{Depends}, \emph{Imports},
+and \emph{LinkingTo}, excluding \emph{Suggests}.}
 
 \item{force}{Whether to force the installation of packages.
 Default is \code{FALSE}.}
+
+\item{install}{Whether missing or outdated packages may be installed.
+Set to \code{FALSE} for read-only diagnostics. Default is \code{TRUE} for backward
+compatibility.}
+
+\item{timeout}{Maximum installation time in seconds. A finite timeout runs
+installation in a supervised R subprocess and terminates only that process
+tree on timeout. Default is \code{Inf}.}
+
+\item{load}{Whether to load packages after successful installation.
+Uses \link{do.call} dispatch to avoid CRAN static checks on \link[base:library]{base::library}.
+Default is \code{FALSE}.}
+
+\item{cores}{Number of workers used by \code{\link[pak:pkg_install]{pak::pkg_install()}}. Use \code{NULL}
+(the default) to let pak select its worker count automatically.}
 
 \item{verbose}{Whether to print the message.
 Default is \code{TRUE}.}
@@ -33,4 +54,10 @@ Package installation status.
 }
 \description{
 Check and install R packages
+}
+\details{
+GitHub packages are normally installed with \code{pak}. If \code{pak} cannot
+parse a GitHub package's \code{DESCRIPTION} file, \code{check_r()} retries that package
+with the optional \code{remotes} package. This preserves the fast dependency
+resolution path while supporting legacy repositories with malformed metadata.
 }

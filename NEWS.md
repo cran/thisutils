@@ -1,3 +1,27 @@
+# thisutils 0.4.9
+
+* **fix**:
+  * `log_message()` now emits an actual R warning for `message_type = "warning"`, so warnings are visible to `tryCatch()`, `warn = 2`, and `warning()` handlers.
+
+# thisutils 0.4.8
+
+* **feat**:
+  * Add `classification_metrics_compute()` plus dense and sparse column-wise
+    top-k helpers, with native C++ implementations.
+
+* **fix**:
+  * Fix `check_r()`: change `dependencies` default from `TRUE` to `NA`, so
+    hard dependencies (`Depends`, `Imports`, `LinkingTo`) are installed by
+    default while `Suggests` are excluded (#XXX).
+  * Improve `check_r()` error reporting: traverse the full error chain via
+    `rlang::cnd_message(e, inherit = TRUE)` instead of only showing the
+    top-level message; strip ANSI escape codes to avoid printing garbage in
+    the log.
+  * Eliminate duplicate "Failed to install" messages in `check_r()` by storing
+    error details per-package and reporting them once in the final summary.
+  * Retry GitHub packages with `remotes` when `pak` cannot parse a malformed
+    `DESCRIPTION` file.
+
 # thisutils 0.4.6
 
 * **feat**:

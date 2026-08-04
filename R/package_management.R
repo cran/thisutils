@@ -6,22 +6,50 @@
 #' Package source can be *CRAN*, *Bioconductor* or *Github*.
 #' By default, the package name is extracted according to the `packages` parameter.
 #' @param lib The location of the library directories where to install the packages.
-#' @param dependencies Whether to install dependencies of the packages.
-#' Default is `TRUE`.
+#' @param dependencies Which dependencies to install.
+#' Passed to [pak::pkg_install].
+#' Default is `NA`, auto install hard dependencies: *Depends*, *Imports*,
+#' and *LinkingTo*, excluding *Suggests*.
 #' @param force Whether to force the installation of packages.
 #' Default is `FALSE`.
+#' @param install Whether missing or outdated packages may be installed.
+#' Set to `FALSE` for read-only diagnostics. Default is `TRUE` for backward
+#' compatibility.
+#' @param timeout Maximum installation time in seconds. A finite timeout runs
+#' installation in a supervised R subprocess and terminates only that process
+#' tree on timeout. Default is `Inf`.
+#' @param load Whether to load packages after successful installation.
+#' Uses [do.call] dispatch to avoid CRAN static checks on [base::library].
+#' Default is `FALSE`.
+#' @param cores Number of workers used by [pak::pkg_install()]. Use `NULL`
+#' (the default) to let pak select its worker count automatically.
+#' @details GitHub packages are normally installed with `pak`. If `pak` cannot
+#' parse a GitHub package's `DESCRIPTION` file, `check_r()` retries that package
+#' with the optional `remotes` package. This preserves the fast dependency
+#' resolution path while supporting legacy repositories with malformed metadata.
 #'
 #' @return Package installation status.
 #'
 #' @export
 check_r <- function(
-    packages,
-    lib = .libPaths()[1],
-    dependencies = TRUE,
-    force = FALSE,
-    verbose = TRUE) {
-  status_list <- list()
-  for (pkg in packages) {
+  packages,
+  lib = .libPaths()[1],
+  dependencies = NA,
+  force = FALSE,
+  install = TRUE,
+  timeout = Inf,
+  load = FALSE,
+  cores = NULL,
+  verbose = TRUE
+) {
+  if (!is.logical(install) || length(install) != 1L || is.na(install)) {
+    stop("`install` must be TRUE or FALSE", call. = FALSE)
+  }
+  if (!is.numeric(timeout) || length(timeout) != 1L || is.na(timeout) || timeout <= 0) {
+    stop("`timeout` must be one positive number or Inf", call. = FALSE)
+  }
+  packages <- as.character(packages)
+  package_info <- lapply(packages, function(pkg) {
     version <- NULL
     if (grepl("/", pkg)) {
       pkg_name <- strsplit(pkg, split = "/|@|==", perl = TRUE)[[1]][[2]]
@@ -32,88 +60,328 @@ check_r <- function(
         version <- pkg_info[[2]]
       }
     }
+    list(package = pkg, name = pkg_name, version = version)
+  })
+  package_names <- vapply(package_info, `[[`, character(1), "name")
+  unique_names <- unique(package_names)
+  package_info <- lapply(unique_names, function(pkg_name) {
+    matches <- package_info[package_names == pkg_name]
+    remote <- vapply(matches, function(info) grepl("/", info$package), logical(1))
+    remote_index <- which(remote)
+    matches[[if (length(remote_index) > 0L) remote_index[[1]] else 1L]]
+  })
+  names(package_info) <- unique_names
+
+  if (!is.null(cores)) {
+    cores <- suppressWarnings(as.integer(cores[[1]]))
+    if (is.na(cores) || cores < 1L) {
+      stop("`cores` must be a positive integer or NULL.", call. = FALSE)
+    }
+    old_options <- options(Ncpus = cores)
+    on.exit(options(old_options), add = TRUE)
+  }
+
+  needs_install <- vapply(package_info, function(info) {
     check_pkg <- check_pkg_status(
-      pkg_name,
-      version = version,
+      info$name,
+      version = info$version,
       lib = lib
     )
 
     force_update <- FALSE
-    if (check_pkg && !is.null(version)) {
-      current_version <- utils::packageVersion(pkg_name)
-      force_update <- current_version < package_version(version)
+    if (check_pkg && !is.null(info$version)) {
+      current_version <- utils::packageVersion(info$name, lib.loc = lib)
+      force_update <- current_version < package_version(info$version)
     }
-    force_update <- force_update || isTRUE(force)
+    !check_pkg || force_update || isTRUE(force)
+  }, logical(1))
 
-    if (!check_pkg || force_update) {
+  error_details <- list()
+  packages_to_install <- vapply(package_info[needs_install], `[[`, character(1), "package")
+  package_names_to_install <- names(package_info)[needs_install]
+  if (length(packages_to_install) > 0L && !isTRUE(install)) {
+    for (index in seq_along(packages_to_install)) {
+      info <- package_info[[package_names_to_install[[index]]]]
+      is_outdated <- !is.null(info$version) &&
+        check_pkg_status(info$name, version = NULL, lib = lib)
+      error_details[[info$name]] <- if (is_outdated) {
+        "the installed version does not satisfy the request and installation is disabled"
+      } else {
+        "the package is unavailable and installation is disabled"
+      }
+    }
+  } else if (length(packages_to_install) > 0L) {
+    log_message(
+      "Installing {.val {length(packages_to_install)}} R packages...",
+      message_type = "running",
+      verbose = verbose
+    )
+    if (!dir.exists(lib)) {
+      dir.create(lib, recursive = TRUE, showWarnings = FALSE)
+    }
+    install_packages <- function(pkgs) {
+      if (isTRUE(verbose)) {
+        pak::pkg_install(pkgs, lib = lib, ask = FALSE, dependencies = dependencies)
+      } else {
+        invisible(suppressMessages(
+          pak::pkg_install(pkgs, lib = lib, ask = FALSE, dependencies = dependencies)
+        ))
+      }
+    }
+    install_error <- if (is.finite(timeout)) {
+      NULL
+    } else {
+      tryCatch(install_packages(packages_to_install), error = identity)
+    }
+    if (is.finite(timeout) || inherits(install_error, "error")) {
       log_message(
-        "Installing: {.pkg {pkg_name}}...",
-        message_type = "running",
+        if (is.finite(timeout)) "Installing packages individually with a timeout." else "Batch installation failed; retrying packages individually.",
+        message_type = "warning",
         verbose = verbose
       )
-      status_list[[pkg]] <- FALSE
-      tryCatch(
-        expr = {
-          if (!dir.exists(lib)) {
-            dir.create(lib, recursive = TRUE, showWarnings = FALSE)
-          }
-          if (isTRUE(verbose)) {
-            pak::pkg_install(
-              pkg,
-              lib = lib,
-              ask = FALSE,
-              dependencies = dependencies
-            )
-          } else {
-            invisible(
-              suppressMessages(
-                pak::pkg_install(
-                  pkg,
-                  lib = lib,
-                  ask = FALSE,
-                  dependencies = dependencies
-                )
-              )
-            )
-          }
-        },
-        error = function(e) {
-          status_list[[pkg]] <- FALSE
-          log_message(
-            "Failed to install: {.pkg {pkg_name}}. Error: {.val {e$message}}",
-            message_type = "warning",
+      for (index in seq_along(packages_to_install)) {
+        pkg <- packages_to_install[[index]]
+        pkg_name <- package_names_to_install[[index]]
+        error <- tryCatch(
+          if (is.finite(timeout)) {
+          check_r_run_install(
+            pkg = pkg,
+            lib = lib,
+            dependencies = dependencies,
+            timeout = timeout,
             verbose = verbose
           )
+          } else {
+            install_packages(pkg)
+          },
+          error = identity
+        )
+        if (inherits(error, "error")) {
+          fallback_error <- check_r_try_remotes_fallback(
+            pkg = pkg,
+            error = error,
+            lib = lib,
+            dependencies = dependencies,
+            force = force,
+            verbose = verbose
+          )
+          if (is.null(fallback_error)) {
+            next
+          }
+          error <- fallback_error
+          error_details[[pkg_name]] <- tryCatch(
+            cli::ansi_strip(rlang::cnd_message(error, inherit = TRUE)),
+            error = function(...) cli::ansi_strip(conditionMessage(error))
+          )
         }
-      )
-      status_list[[pkg]] <- check_pkg_status(
-        pkg_name,
-        version = version,
-        lib = lib
-      )
-    } else {
-      status_list[[pkg]] <- TRUE
+      }
     }
   }
+
+  status_list <- lapply(package_info, function(info) {
+    check_pkg <- check_pkg_status(
+      info$name,
+      version = info$version,
+      lib = lib
+    )
+    isTRUE(check_pkg)
+  })
+  names(status_list) <- names(package_info)
 
   success <- sapply(status_list, isTRUE)
   failed <- names(status_list)[!success]
 
   if (length(failed) > 0) {
-    log_message(
-      "Failed to install: {.pkg {failed}}. Please install manually",
-      message_type = "warning",
-      verbose = verbose
-    )
+    for (pkg_name in failed) {
+      err <- error_details[[pkg_name]]
+      if (!is.null(err)) {
+        log_message(
+          "Failed to install: {.pkg {pkg_name}}. Error: {.val {err}}",
+          message_type = "warning",
+          verbose = verbose
+        )
+      } else {
+        log_message(
+          "Failed to install: {.pkg {pkg_name}}. Please install manually",
+          message_type = "warning",
+          verbose = verbose
+        )
+      }
+    }
   } else {
+    installed_names <- names(status_list)[success]
     log_message(
-      "{.pkg {packages}} installed successfully",
+      "{.pkg {installed_names}} installed successfully",
       message_type = "success",
       verbose = verbose
     )
   }
 
+  if (isTRUE(load)) {
+    load_packages(
+      names(status_list)[success],
+      lib = lib,
+      verbose = verbose
+    )
+  }
+
   return(invisible(status_list))
+}
+
+check_r_try_remotes_fallback <- function(
+  pkg,
+  error,
+  lib,
+  dependencies = NA,
+  force = FALSE,
+  verbose = TRUE
+) {
+  error_message <- tryCatch(
+    cli::ansi_strip(rlang::cnd_message(error, inherit = TRUE)),
+    error = function(...) cli::ansi_strip(conditionMessage(error))
+  )
+  needs_fallback <- grepl("/", pkg, fixed = TRUE) && grepl(
+    "(can't|cannot) parse DESCRIPTION|duplicate DESCRIPTION fields",
+    error_message,
+    ignore.case = TRUE
+  )
+  if (!needs_fallback) {
+    return(error)
+  }
+  remote_parts <- strsplit(pkg, "@", fixed = TRUE)[[1]]
+  repo <- remote_parts[[1]]
+  ref <- if (length(remote_parts) > 1L) remote_parts[[2]] else "HEAD"
+  log_message(
+    "Retrying {.pkg {pkg}} with remotes because pak could not parse its DESCRIPTION file.",
+    message_type = "warning",
+    verbose = verbose
+  )
+  fallback_error <- tryCatch(
+    {
+      remotes::install_github(
+        repo = repo,
+        ref = ref,
+        lib = lib,
+        dependencies = dependencies,
+        upgrade = "never",
+        force = force,
+        quiet = !verbose
+      )
+      NULL
+    },
+    error = identity
+  )
+  fallback_error
+}
+
+check_r_run_install <- function(
+  pkg,
+  lib,
+  dependencies = NA,
+  timeout = Inf,
+  verbose = TRUE
+) {
+  process <- callr::r_bg(
+    func = function(pkg, lib, dependencies, verbose) {
+      install_call <- function() {
+        pak::pkg_install(
+          pkg,
+          lib = lib,
+          ask = FALSE,
+          dependencies = dependencies
+        )
+      }
+      if (isTRUE(verbose)) {
+        install_call()
+      } else {
+        invisible(suppressMessages(install_call()))
+      }
+      invisible(TRUE)
+    },
+    args = list(
+      pkg = pkg,
+      lib = lib,
+      dependencies = dependencies,
+      verbose = verbose
+    ),
+    libpath = unique(c(lib, .libPaths())),
+    stdout = "|",
+    stderr = "|",
+    supervise = TRUE,
+    package = FALSE
+  )
+  on.exit({
+    if (isTRUE(process$is_alive())) {
+      process$kill_tree()
+    }
+  }, add = TRUE)
+
+  drain_output <- function() {
+    output <- process$read_output_lines()
+    errors <- process$read_error_lines()
+    if (isTRUE(verbose)) {
+      if (length(output) > 0L) writeLines(output)
+      if (length(errors) > 0L) writeLines(errors, con = stderr())
+    }
+  }
+
+  started_at <- Sys.time()
+  while (isTRUE(process$is_alive())) {
+    wait_ms <- 100L
+    if (is.finite(timeout)) {
+      elapsed_ms <- as.numeric(difftime(Sys.time(), started_at, units = "secs")) * 1000
+      remaining_ms <- ceiling(timeout * 1000 - elapsed_ms)
+      if (remaining_ms <= 0) break
+      wait_ms <- as.integer(min(wait_ms, remaining_ms))
+    }
+    process$wait(timeout = wait_ms)
+    drain_output()
+  }
+
+  drain_output()
+  if (isTRUE(process$is_alive())) {
+    process$kill_tree()
+    stop(
+      sprintf("Package installation timed out after %s seconds: %s", format(timeout), pkg),
+      call. = FALSE
+    )
+  }
+  process$get_result()
+  invisible(TRUE)
+}
+
+load_packages <- function(pkgs, lib = .libPaths(), verbose = TRUE) {
+  for (pkg in pkgs) {
+    result <- tryCatch(
+      expr = {
+        do.call(
+          "library",
+          list(
+            pkg,
+            lib.loc = lib,
+            character.only = TRUE,
+            quietly = !verbose
+          )
+        )
+        TRUE
+      },
+      error = function(e) FALSE
+    )
+    if (!isTRUE(result)) {
+      log_message(
+        "Failed to load: {.pkg {pkg}}",
+        message_type = "warning",
+        verbose = verbose
+      )
+    } else {
+      log_message(
+        "Loaded: {.pkg {pkg}}",
+        message_type = "success",
+        verbose = verbose
+      )
+    }
+  }
+  invisible(NULL)
 }
 
 #' @title Check and remove R packages
@@ -125,9 +393,10 @@ check_r <- function(
 #'
 #' @export
 remove_r <- function(
-    packages,
-    lib = .libPaths()[1],
-    verbose = TRUE) {
+  packages,
+  lib = .libPaths()[1],
+  verbose = TRUE
+) {
   status_list <- list()
   for (pkg in packages) {
     pkg_installed <- check_pkg_status(pkg, lib = lib)
@@ -192,9 +461,10 @@ remove_r <- function(
 #'
 #' @export
 check_pkg_status <- function(
-    pkg,
-    version = NULL,
-    lib = .libPaths()[1]) {
+  pkg,
+  version = NULL,
+  lib = .libPaths()[1]
+) {
   installed_pkgs_info <- utils::installed.packages(lib.loc = lib)
   installed_pkgs <- installed_pkgs_info[, "Package"]
   installed_pkgs_version <- installed_pkgs_info[, "Version"]

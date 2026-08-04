@@ -3,7 +3,7 @@
 #' @description
 #' Integrate the message printing function with the \href{https://cli.r-lib.org}{cli} package,
 #' and the [base::message] function.
-#' The message could be suppressed by [base::suppressMessages].
+#' The message could be suppressed by `base::suppressMessages`.
 #'
 #' @md
 #' @param ... The message to print.
@@ -443,6 +443,14 @@ log_message <- function(
     }
 
     emit_message(msg)
+
+    if (identical(message_type, "warning")) {
+      plain_warning <- tryCatch(
+        cli::ansi_strip(cli::format_inline(msg, .envir = .envir)),
+        error = function(e) msg
+      )
+      rlang::warn(plain_warning, call. = NULL)
+    }
 
     return(invisible(NULL))
   }
