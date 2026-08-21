@@ -27,6 +27,8 @@
 #' parse a GitHub package's `DESCRIPTION` file, `check_r()` retries that package
 #' with the optional `remotes` package. This preserves the fast dependency
 #' resolution path while supporting legacy repositories with malformed metadata.
+#' When `PKG_SUBPROCESS_TIMEOUT` is unset, the pak subprocess startup window is
+#' temporarily increased to 30 seconds and restored before returning.
 #'
 #' @return Package installation status.
 #'
@@ -49,10 +51,33 @@ check_r <- function(
     stop("`timeout` must be one positive number or Inf", call. = FALSE)
   }
   packages <- as.character(packages)
+  pak_subprocess_timeout <- Sys.getenv(
+    "PKG_SUBPROCESS_TIMEOUT",
+    unset = NA_character_
+  )
+  if (is.na(pak_subprocess_timeout) || !nzchar(pak_subprocess_timeout)) {
+    Sys.setenv(PKG_SUBPROCESS_TIMEOUT = "30000")
+    on.exit(
+      if (is.na(pak_subprocess_timeout)) {
+        Sys.unsetenv("PKG_SUBPROCESS_TIMEOUT")
+      } else {
+        Sys.setenv(PKG_SUBPROCESS_TIMEOUT = pak_subprocess_timeout)
+      },
+      add = TRUE
+    )
+  }
+  search_libs <- unique(c(lib, .libPaths()))
   package_info <- lapply(packages, function(pkg) {
     version <- NULL
+    remote <- NULL
+    ref <- NULL
     if (grepl("/", pkg)) {
-      pkg_name <- strsplit(pkg, split = "/|@|==", perl = TRUE)[[1]][[2]]
+      remote_parts <- strsplit(pkg, split = "@", fixed = TRUE)[[1]]
+      remote <- remote_parts[[1]]
+      if (length(remote_parts) > 1L) {
+        ref <- paste(remote_parts[-1L], collapse = "@")
+      }
+      pkg_name <- strsplit(remote, split = "/", fixed = TRUE)[[1]][[2]]
     } else {
       pkg_info <- strsplit(pkg, split = "@|==", perl = TRUE)[[1]]
       pkg_name <- pkg_info[[1]]
@@ -60,7 +85,13 @@ check_r <- function(
         version <- pkg_info[[2]]
       }
     }
-    list(package = pkg, name = pkg_name, version = version)
+    list(
+      package = pkg,
+      name = pkg_name,
+      version = version,
+      remote = remote,
+      ref = ref
+    )
   })
   package_names <- vapply(package_info, `[[`, character(1), "name")
   unique_names <- unique(package_names)
@@ -85,15 +116,16 @@ check_r <- function(
     check_pkg <- check_pkg_status(
       info$name,
       version = info$version,
-      lib = lib
+      lib = search_libs
     )
 
     force_update <- FALSE
     if (check_pkg && !is.null(info$version)) {
-      current_version <- utils::packageVersion(info$name, lib.loc = lib)
+      current_version <- utils::packageVersion(info$name, lib.loc = search_libs)
       force_update <- current_version < package_version(info$version)
     }
-    !check_pkg || force_update || isTRUE(force)
+    remote_matches <- check_pkg && check_r_remote_status(info, lib = search_libs)
+    !check_pkg || !remote_matches || force_update || isTRUE(force)
   }, logical(1))
 
   error_details <- list()
@@ -103,8 +135,13 @@ check_r <- function(
     for (index in seq_along(packages_to_install)) {
       info <- package_info[[package_names_to_install[[index]]]]
       is_outdated <- !is.null(info$version) &&
-        check_pkg_status(info$name, version = NULL, lib = lib)
-      error_details[[info$name]] <- if (is_outdated) {
+        check_pkg_status(info$name, version = NULL, lib = search_libs)
+      wrong_remote <- !is.null(info$remote) &&
+        check_pkg_status(info$name, version = NULL, lib = search_libs) &&
+        !check_r_remote_status(info, lib = search_libs)
+      error_details[[info$name]] <- if (wrong_remote) {
+        "the installed package does not match the requested GitHub source and installation is disabled"
+      } else if (is_outdated) {
         "the installed version does not satisfy the request and installation is disabled"
       } else {
         "the package is unavailable and installation is disabled"
@@ -182,9 +219,9 @@ check_r <- function(
     check_pkg <- check_pkg_status(
       info$name,
       version = info$version,
-      lib = lib
+      lib = search_libs
     )
-    isTRUE(check_pkg)
+    isTRUE(check_pkg) && check_r_remote_status(info, lib = search_libs)
   })
   names(status_list) <- names(package_info)
 
@@ -220,12 +257,50 @@ check_r <- function(
   if (isTRUE(load)) {
     load_packages(
       names(status_list)[success],
-      lib = lib,
+      lib = search_libs,
       verbose = verbose
     )
   }
 
   return(invisible(status_list))
+}
+
+check_r_remote_status <- function(info, lib = .libPaths()) {
+  if (is.null(info$remote)) {
+    return(TRUE)
+  }
+  description <- tryCatch(
+    utils::packageDescription(info$name, lib.loc = lib),
+    error = function(...) NULL,
+    warning = function(...) NULL
+  )
+  if (is.null(description)) {
+    return(FALSE)
+  }
+  installed_remote <- description[["RemotePkgRef"]]
+  if (is.null(installed_remote) || !nzchar(installed_remote)) {
+    username <- description[["RemoteUsername"]]
+    repository <- description[["RemoteRepo"]]
+    if (is.null(username) || is.null(repository)) {
+      return(FALSE)
+    }
+    installed_remote <- paste(username, repository, sep = "/")
+  }
+  normalize_remote <- function(x) {
+    tolower(sub("\\.git$", "", sub("@.*$", "", x)))
+  }
+  if (!identical(normalize_remote(installed_remote), normalize_remote(info$remote))) {
+    return(FALSE)
+  }
+  if (is.null(info$ref) || !nzchar(info$ref)) {
+    return(TRUE)
+  }
+  installed_refs <- unlist(
+    description[c("RemoteRef", "RemoteSha")],
+    use.names = FALSE
+  )
+  installed_refs <- installed_refs[!is.na(installed_refs) & nzchar(installed_refs)]
+  any(installed_refs == info$ref | startsWith(installed_refs, info$ref))
 }
 
 check_r_try_remotes_fallback <- function(
