@@ -5,8 +5,10 @@ library(Matrix)
 
 ## ----sparse-semantics---------------------------------------------------------
 x <- Matrix(
-  c(-3, 0, 2,
-    -1, 4, 0),
+  c(
+    -3, 0, 2,
+    -1, 4, 0
+  ),
   nrow = 3,
   sparse = TRUE,
   dimnames = list(paste0("r", 1:3), paste0("c", 1:2))

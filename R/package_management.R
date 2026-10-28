@@ -181,13 +181,13 @@ check_r <- function(
         pkg_name <- package_names_to_install[[index]]
         error <- tryCatch(
           if (is.finite(timeout)) {
-          check_r_run_install(
-            pkg = pkg,
-            lib = lib,
-            dependencies = dependencies,
-            timeout = timeout,
-            verbose = verbose
-          )
+            check_r_run_install(
+              pkg = pkg,
+              lib = lib,
+              dependencies = dependencies,
+              timeout = timeout,
+              verbose = verbose
+            )
           } else {
             install_packages(pkg)
           },
@@ -287,6 +287,7 @@ check_r_remote_status <- function(info, lib = .libPaths()) {
     installed_remote <- paste(username, repository, sep = "/")
   }
   normalize_remote <- function(x) {
+    x <- sub("^github::", "", x, ignore.case = TRUE)
     tolower(sub("\\.git$", "", sub("@.*$", "", x)))
   }
   if (!identical(normalize_remote(installed_remote), normalize_remote(info$remote))) {
@@ -321,6 +322,14 @@ check_r_try_remotes_fallback <- function(
     ignore.case = TRUE
   )
   if (!needs_fallback) {
+    return(error)
+  }
+  if (!requireNamespace("remotes", quietly = TRUE)) {
+    log_message(
+      "Cannot retry {.pkg {pkg}} because the optional {.pkg remotes} package is not installed; the original installation failure is retained.",
+      message_type = "warning",
+      verbose = verbose
+    )
     return(error)
   }
   remote_parts <- strsplit(pkg, "@", fixed = TRUE)[[1]]
@@ -385,11 +394,14 @@ check_r_run_install <- function(
     supervise = TRUE,
     package = FALSE
   )
-  on.exit({
-    if (isTRUE(process$is_alive())) {
-      process$kill_tree()
-    }
-  }, add = TRUE)
+  on.exit(
+    {
+      if (isTRUE(process$is_alive())) {
+        process$kill_tree()
+      }
+    },
+    add = TRUE
+  )
 
   drain_output <- function() {
     output <- process$read_output_lines()

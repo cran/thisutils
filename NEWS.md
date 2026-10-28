@@ -1,3 +1,94 @@
+# thisutils 0.5.3
+
+* **feat**:
+  * Add `fit_trends()` for GAM and PreTSA feature trends. Statistics include
+    fit scores, peak and valley times, P-values, and adjusted P-values.
+    `fitted`, `lower`, and `upper` are optional and stay in input order.
+    GAM bounds are +/- 2 standard errors on the link scale. PreTSA bounds
+    equal the fitted values.
+  * Add `local_verbose()` to set `options(log_message.verbose)` for the
+    calling frame and restore it on exit. Compiled `log_message()` reads
+    that option through `get_verbose()`.
+  * Add `--demo` to the Python and Shell `log_message` scripts and remove
+    the standalone example files.
+  * Move the Python and Shell helpers from `inst/python/` to
+    `inst/scripts/`. The old path is removed.
+
+* **compatibility**:
+  * `invoke_fun()` requires a list or pairlist of argument values, or `NULL`.
+    Calls with arguments still use a temporary child environment: captured
+    expressions use temporary symbols, caller-frame side effects stay in that
+    environment, and captured model calls are not generally replayable.
+  * R verbosity is unchanged: an explicit call argument wins, then
+    `options(log_message.verbose)`, otherwise the message stays visible.
+  * Python and Shell no longer read `LOG_MESSAGE_VERBOSE`. An omitted
+    `verbose` stays visible.
+  * `ask` is no longer silenced when `verbose = FALSE` in R, Python, and
+    Shell. `error` still signals.
+  * Honor `NO_COLOR` in the Python and Shell scripts so terminal styling
+    can be bypassed.
+
+* **fix**:
+  * Keep nonconstant zero-sum features in PreTSA trend significance tests and
+    return a P-value of one for constant features.
+  * Include zero values in `fast_aggregate()` means and align them with
+    `aggregate_matrix()` means.
+  * Apply grouped maximum, minimum, and custom summaries separately to each
+    column, preserving dimensions and names for single-row groups.
+  * Preserve missing values when sparse maxima use `na.rm = FALSE`, and
+    respect symmetric and triangular sparse matrix storage.
+  * Recognize pak's `github::` prefix in installed repository metadata when
+    checking package sources, avoiding unnecessary reinstallation.
+  * Reduce `invoke_fun()` call-construction overhead while keeping large
+    objects outside captured calls. Preserve string function names, use the
+    same function lookup for empty and nonempty calls, avoid temporary-name
+    collisions, and preserve explicit missing arguments and their defaults.
+  * Keep the original `check_r()` installation error when the optional
+    `remotes` package is not installed.
+  * Report a PSOCK worker that exits during send, or while the scheduler is
+    waiting for a result, as `parallelize_worker_error`. Classification does
+    not depend on the language of R's connection messages. A serialization
+    failure, including a warning promoted to an error, is still raised
+    unchanged when the worker is alive.
+
+* **docs**:
+  * List `local_verbose` in the pkgdown reference index.
+
+# thisutils 0.5.2
+
+* **feat**:
+  * Add `%|||%` for `NULL` or zero-length fallbacks. `%ss%` remains
+    `NULL`-only so it does not mask rlang `%||%`.
+  * Add `detect_cores()`, which reports the number of CPU cores and clamps it
+    to an optional `max_threads` bound, falling back to `1` when the probe
+    fails. Supplying `num_session` gives the worker-count heuristic that
+    `parallelize_fun()` uses, so core detection lives in one place.
+  * Add `col_maxs()`, `row_maxs()`, `fast_aggregate()`, and
+    `aggregate_matrix()` for dense and sparse matrices. Sparse maxima treat
+    implicit zeros as zero.
+
+* **performance**:
+  * Evaluate each scheduled task batch behind one message sink instead of
+    opening and closing a connection for every input.
+  * Set nested-worker state once per scheduled batch, resetting it only after
+    inputs that mutate the internal option, instead of updating options around
+    every input.
+  * Minimize PSOCK worker closures, remove source references from worker-only
+    function copies, and use native serialization for same-host workers.
+  * Bundle nested-call helpers into one compact PSOCK export instead of sending
+    each internal function separately.
+  * Send each PSOCK batch only its assigned input values and random-number
+    streams instead of copying the complete task list to every worker.
+  * Skip lifecycle logging entirely for `verbose = FALSE` calls.
+  * Limit verbose formatting to the first 20 distinct error types while
+    retaining every error object in the returned results.
+* **fix**:
+  * Collapse multi-element inline expression evaluations to a single string in
+    `parse_inline_expressions()`. Vector-valued evaluations previously grew the
+    message text beyond length one and crashed the `grepl`-based replacement
+    loop with `'length = N' in coercion to 'logical(1)'` before the real error
+    details could be reported.
+
 # thisutils 0.5.0
 
 * **compatibility**:

@@ -13,10 +13,6 @@ using namespace Rcpp;
 
 namespace {
 
-inline bool is_valid_distance(double x) {
-  return !NumericVector::is_na(x) && std::isfinite(x);
-}
-
 struct KnnEntry {
   double dist_sq;
   int index;
@@ -201,78 +197,6 @@ ClusterIndex build_cluster_index(const double* x, int n, int p) {
 
   return index;
 }
-
-struct ExactKnnWorker {
-  const double* x;
-  int* nn_idx;
-  double* nn_dists;
-  int n;
-  int p;
-  int k;
-  bool exclude_self;
-
-  ExactKnnWorker(
-    const double* x,
-    int* nn_idx,
-    double* nn_dists,
-    int n,
-    int p,
-    int k,
-    bool exclude_self
-  ) : x(x),
-      nn_idx(nn_idx),
-      nn_dists(nn_dists),
-      n(n),
-      p(p),
-      k(k),
-      exclude_self(exclude_self) {}
-
-  inline double at(int row, int col) const {
-    return x[static_cast<std::size_t>(row) * static_cast<std::size_t>(p) + col];
-  }
-
-  void run(std::size_t begin, std::size_t end) const {
-    std::vector<KnnEntry> heap;
-    heap.reserve(static_cast<std::size_t>(k));
-    std::vector<double> query(static_cast<std::size_t>(p), 0.0);
-
-    for (std::size_t i_size = begin; i_size < end; ++i_size) {
-      const int i = static_cast<int>(i_size);
-      heap.clear();
-      for (int col = 0; col < p; ++col) {
-        query[col] = at(i, col);
-      }
-
-      for (int j = 0; j < n; ++j) {
-        if (exclude_self && i == j) {
-          continue;
-        }
-
-        double dist_sq = 0.0;
-        int col = 0;
-        for (; col < p; ++col) {
-          const double diff = query[col] - at(j, col);
-          dist_sq += diff * diff;
-          if (static_cast<int>(heap.size()) == k && dist_sq > heap.front().dist_sq) {
-            break;
-          }
-        }
-        if (col < p) {
-          continue;
-        }
-
-        maybe_insert_neighbor(heap, k, KnnEntry{dist_sq, j + 1});
-      }
-
-      std::sort_heap(heap.begin(), heap.end(), knn_entry_less);
-
-      for (int neighbor = 0; neighbor < k; ++neighbor) {
-        nn_idx[i + n * neighbor] = heap[neighbor].index;
-        nn_dists[i + n * neighbor] = std::sqrt(std::max(0.0, heap[neighbor].dist_sq));
-      }
-    }
-  }
-};
 
 double hbeta_distances_cpp(
     const std::vector<double>& distances,
@@ -805,93 +729,4 @@ NumericMatrix compute_lisi_matrix(
   }
 
   return out;
-}
-
-// [[Rcpp::export]]
-List lisi_exact_knn_cpp(
-    const NumericMatrix& X,
-    int k,
-    bool exclude_self = false,
-    int n_threads = 0) {
-  const int n = X.nrow();
-  const int p = X.ncol();
-
-  if (n < 1) {
-    stop("X must have at least one row.");
-  }
-  const int max_k = exclude_self ? n - 1 : n;
-  if (k < 1 || k > max_k) {
-    stop("k must be between 1 and the number of available neighbors.");
-  }
-  if (n_threads < 0) {
-    stop("n_threads must be non-negative, where zero selects hardware threads.");
-  }
-
-  std::vector<double> x_row_major = make_row_major_checked(X);
-
-  IntegerMatrix nn_idx(n, k);
-  NumericMatrix nn_dists(n, k);
-
-  ExactKnnWorker worker(
-    x_row_major.data(),
-    INTEGER(nn_idx),
-    REAL(nn_dists),
-    n,
-    p,
-    k,
-    exclude_self
-  );
-
-  run_parallel_worker(worker, n, n_threads);
-
-  return List::create(
-    Named("nn.idx") = nn_idx,
-    Named("nn.dists") = nn_dists
-  );
-}
-
-// [[Rcpp::export]]
-List drop_self_from_knn_cpp(
-    const IntegerMatrix& nn_idx,
-    const NumericMatrix& nn_dists) {
-  const int n = nn_idx.nrow();
-  const int k = nn_idx.ncol();
-
-  if (nn_dists.nrow() != n || nn_dists.ncol() != k) {
-    stop("nn_idx and nn_dists must have the same dimensions.");
-  }
-  if (k < 2) {
-    stop("Need at least two neighbors to remove self from the KNN graph.");
-  }
-
-  IntegerMatrix idx_out(n, k - 1);
-  NumericMatrix dist_out(n, k - 1);
-
-  for (int i = 0; i < n; ++i) {
-    int drop_pos = -1;
-    for (int neighbor = 0; neighbor < k; ++neighbor) {
-      if (nn_idx(i, neighbor) == (i + 1)) {
-        drop_pos = neighbor;
-        break;
-      }
-    }
-    if (drop_pos < 0) {
-      drop_pos = 0;
-    }
-
-    int out_col = 0;
-    for (int neighbor = 0; neighbor < k; ++neighbor) {
-      if (neighbor == drop_pos) {
-        continue;
-      }
-      idx_out(i, out_col) = nn_idx(i, neighbor);
-      dist_out(i, out_col) = nn_dists(i, neighbor);
-      ++out_col;
-    }
-  }
-
-  return List::create(
-    Named("nn.idx") = idx_out,
-    Named("nn.dists") = dist_out
-  );
 }

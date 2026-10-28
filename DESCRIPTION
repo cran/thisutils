@@ -1,8 +1,8 @@
 Type: Package
 Package: thisutils
 Title: Reliable Utilities for Reusable Research Workflows
-Version: 0.5.0
-Date: 2026-08-13
+Version: 0.5.3
+Date: 2026-10-28
 Authors@R: 
     c(
     person(given = "Meng", family = "Xu", email = "mengxu98@qq.com", role = c("aut", "cre"), comment = c(ORCID = "0000-0002-8300-1054")),
@@ -20,19 +20,20 @@ License: MIT + file LICENSE
 URL: https://mengxu98.github.io/thisutils/
 BugReports: https://github.com/mengxu98/thisutils/issues
 Depends: R (>= 4.1.0)
-Imports: callr (>= 3.5.0), cli, methods, Matrix, pak, parallel, ps,
-        Rcpp, rlang, stats, utils
+Imports: callr (>= 3.5.0), cli, methods, Matrix, mgcv, pak, parallel,
+        ps, Rcpp, rlang, stats, splines, utils
 Suggests: BiocNeighbors, knitr, remotes, rmarkdown, testthat (>= 3.1.7)
 LinkingTo: cli, Rcpp
 Config/Needs/website: mengxu98/thistemplate
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 Encoding: UTF-8
-RoxygenNote: 7.3.3
 Language: en-US
+Config/roxygen2/version: 8.1.0
+RoxygenNote: 8.1.1
 NeedsCompilation: yes
-Packaged: 2026-08-13 15:23:52 UTC; mx
+Packaged: 2026-10-28 08:09:51 UTC; mx
 Author: Meng Xu [aut, cre] (ORCID: <https://orcid.org/0000-0002-8300-1054>),
   Haoliang Zhu [aut] (ORCID: <https://orcid.org/0009-0004-9766-5179>)
 Repository: CRAN
-Date/Publication: 2026-08-21 10:40:02 UTC
+Date/Publication: 2026-10-28 09:10:02 UTC

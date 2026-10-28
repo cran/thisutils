@@ -51,6 +51,31 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// row_ranges
+Rcpp::List row_ranges(const Rcpp::NumericMatrix& values);
+RcppExport SEXP _thisutils_row_ranges(SEXP valuesSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Rcpp::NumericMatrix& >::type values(valuesSEXP);
+    rcpp_result_gen = Rcpp::wrap(row_ranges(values));
+    return rcpp_result_gen;
+END_RCPP
+}
+// summarize_curves
+Rcpp::List summarize_curves(const Rcpp::NumericMatrix& fitted, const Rcpp::NumericMatrix& values, const Rcpp::NumericVector& time, bool inclusive);
+RcppExport SEXP _thisutils_summarize_curves(SEXP fittedSEXP, SEXP valuesSEXP, SEXP timeSEXP, SEXP inclusiveSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Rcpp::NumericMatrix& >::type fitted(fittedSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericMatrix& >::type values(valuesSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type time(timeSEXP);
+    Rcpp::traits::input_parameter< bool >::type inclusive(inclusiveSEXP);
+    rcpp_result_gen = Rcpp::wrap(summarize_curves(fitted, values, time, inclusive));
+    return rcpp_result_gen;
+END_RCPP
+}
 // compute_lisi_matrix
 NumericMatrix compute_lisi_matrix(const NumericMatrix& X, const IntegerMatrix& batch_labels, int n_neighbors, double perplexity, double tol, int max_iter, std::string knn_algorithm, int n_threads);
 RcppExport SEXP _thisutils_compute_lisi_matrix(SEXP XSEXP, SEXP batch_labelsSEXP, SEXP n_neighborsSEXP, SEXP perplexitySEXP, SEXP tolSEXP, SEXP max_iterSEXP, SEXP knn_algorithmSEXP, SEXP n_threadsSEXP) {
@@ -66,32 +91,6 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< std::string >::type knn_algorithm(knn_algorithmSEXP);
     Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
     rcpp_result_gen = Rcpp::wrap(compute_lisi_matrix(X, batch_labels, n_neighbors, perplexity, tol, max_iter, knn_algorithm, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// lisi_exact_knn_cpp
-List lisi_exact_knn_cpp(const NumericMatrix& X, int k, bool exclude_self, int n_threads);
-RcppExport SEXP _thisutils_lisi_exact_knn_cpp(SEXP XSEXP, SEXP kSEXP, SEXP exclude_selfSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const NumericMatrix& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< int >::type k(kSEXP);
-    Rcpp::traits::input_parameter< bool >::type exclude_self(exclude_selfSEXP);
-    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(lisi_exact_knn_cpp(X, k, exclude_self, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// drop_self_from_knn_cpp
-List drop_self_from_knn_cpp(const IntegerMatrix& nn_idx, const NumericMatrix& nn_dists);
-RcppExport SEXP _thisutils_drop_self_from_knn_cpp(SEXP nn_idxSEXP, SEXP nn_distsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const IntegerMatrix& >::type nn_idx(nn_idxSEXP);
-    Rcpp::traits::input_parameter< const NumericMatrix& >::type nn_dists(nn_distsSEXP);
-    rcpp_result_gen = Rcpp::wrap(drop_self_from_knn_cpp(nn_idx, nn_dists));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -162,9 +161,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_thisutils_classification_metrics", (DL_FUNC) &_thisutils_classification_metrics, 4},
     {"_thisutils_sparse_topk_by_column", (DL_FUNC) &_thisutils_sparse_topk_by_column, 4},
     {"_thisutils_dense_topk_by_column", (DL_FUNC) &_thisutils_dense_topk_by_column, 3},
+    {"_thisutils_row_ranges", (DL_FUNC) &_thisutils_row_ranges, 1},
+    {"_thisutils_summarize_curves", (DL_FUNC) &_thisutils_summarize_curves, 4},
     {"_thisutils_compute_lisi_matrix", (DL_FUNC) &_thisutils_compute_lisi_matrix, 8},
-    {"_thisutils_lisi_exact_knn_cpp", (DL_FUNC) &_thisutils_lisi_exact_knn_cpp, 4},
-    {"_thisutils_drop_self_from_knn_cpp", (DL_FUNC) &_thisutils_drop_self_from_knn_cpp, 2},
     {"_thisutils_matrix_to_table", (DL_FUNC) &_thisutils_matrix_to_table, 5},
     {"_thisutils_sparse_pearson_block_cpp", (DL_FUNC) &_thisutils_sparse_pearson_block_cpp, 10},
     {"_thisutils_split_indices", (DL_FUNC) &_thisutils_split_indices, 2},

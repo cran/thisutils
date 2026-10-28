@@ -22,21 +22,16 @@
 #' b <- as_matrix(m, return_sparse = TRUE)
 #' b[1:5, 1:5]
 as_matrix <- function(
-    x,
-    return_sparse = FALSE) {
+  x,
+  return_sparse = FALSE
+) {
   if (!inherits(x, "sparseMatrix")) {
     if (return_sparse) {
       return(
         Matrix::Matrix(x, sparse = TRUE, dimnames = dimnames(x))
       )
-    } else {
-      return(
-        Matrix::as.matrix(x)
-      )
     }
-  }
-
-  if (return_sparse) {
+  } else if (return_sparse) {
     return(x)
   }
 

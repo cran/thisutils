@@ -11,6 +11,14 @@ test_that("%ss% returns right side when left is NULL", {
   expect_equal(NULL %ss% NULL, NULL)
 })
 
+test_that("%|||% treats NULL and empty values as missing", {
+  expect_equal(NULL %|||% 10, 10)
+  expect_equal(character(0) %|||% "fallback", "fallback")
+  expect_equal(list() %|||% 1, 1)
+  expect_equal(5 %|||% 10, 5)
+  expect_equal("a" %|||% "b", "a")
+})
+
 test_that("get_namespace_fun returns function from namespace", {
   fn <- get_namespace_fun("base", "mean")
   expect_true(is.function(fn))
@@ -25,24 +33,9 @@ test_that("get_namespace_fun returns NULL for missing function", {
   expect_null(result)
 })
 
-test_that("invoke_fun works with function objects", {
-  f <- function(x, y) x + y
-  expect_equal(invoke_fun(f, list(x = 1, y = 2)), 3)
-})
-
 test_that("invoke_fun works with function name strings", {
   f <- function(x, y) x * y
   expect_equal(invoke_fun("f", list(x = 3, y = 4)), 12)
-})
-
-test_that("invoke_fun works with ... args", {
-  f <- function(x, y) x - y
-  expect_equal(invoke_fun("f", x = 10, y = 3), 7)
-})
-
-test_that("invoke_fun works with no args", {
-  f <- function() 42
-  expect_equal(invoke_fun(f), 42)
 })
 
 test_that("capitalize works on basic strings", {

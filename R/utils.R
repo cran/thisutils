@@ -23,6 +23,36 @@
   }
 }
 
+#' @title Empty-value selection operator
+#'
+#' @description
+#' Return the left side unless it is `NULL` or has length zero, otherwise
+#' return the right side. Use `%ss%` when only `NULL` should fall through;
+#' that matches the rlang `%||%` operator without masking it.
+#'
+#' @md
+#' @param a The left side value to check.
+#' @param b The right side value to use if `a` is `NULL` or length zero.
+#'
+#' @return `a` if it is not `NULL` and has length greater than zero,
+#' otherwise `b`.
+#'
+#' @name grapes-or-or-or-grapes
+#'
+#' @export
+#'
+#' @examples
+#' NULL %|||% 10
+#' character(0) %|||% "fallback"
+#' 5 %|||% 10
+`%|||%` <- function(a, b) {
+  if (is.null(a) || !length(a)) {
+    b
+  } else {
+    a
+  }
+}
+
 #' @title Get a function from a namespace
 #'
 #' @md
@@ -49,11 +79,11 @@ get_namespace_fun <- function(pkg, fun) {
 #'
 #' @md
 #' @param .fn A function, or function name as a string.
-#' @param .args A list of arguments.
+#' @param .args A list or pairlist of argument values, or NULL.
 #' @param ... Other arguments passed to the function.
-#' @param .env Environment in which to evaluate the call.
-#' This will be most useful if `.fn` is a string,
-#' or the function has side-effects.
+#' @param .env Evaluation environment for calls without arguments, or the parent
+#' of the temporary argument environment for calls with arguments. Captured
+#' expressions and caller-frame side effects use that temporary environment.
 #'
 #' @export
 #'
@@ -65,30 +95,40 @@ get_namespace_fun <- function(pkg, fun) {
 #' invoke_fun("f", list(x = 1, y = 2))
 #' invoke_fun("f", x = 1, y = 2)
 invoke_fun <- function(
-    .fn,
-    .args = list(),
-    ...,
-    .env = rlang::caller_env()) {
+  .fn,
+  .args = list(),
+  ...,
+  .env = rlang::caller_env()
+) {
+  if (!is.null(.args) && !is.list(.args)) {
+    rlang::abort("`.args` must be a list or NULL.")
+  }
+  if (!is.function(.fn) && !(
+    rlang::is_scalar_character(.fn) && !is.na(.fn) && nzchar(.fn)
+  )) {
+    rlang::abort("`.fn` must be a function or a non-empty function name.")
+  }
   args <- c(.args, list(...))
   if (!length(args)) {
-    if (rlang::is_scalar_character(.fn)) {
-      .fn <- rlang::env_get(.env, .fn, inherit = TRUE)
-    }
-    call <- rlang::call2(.fn, !!!args)
+    call <- rlang::call2(.fn)
     return(rlang::eval_bare(call, .env))
   }
-  fn_nm <- ".fn"
-  buried_nms <- paste0("", seq_along(args))
-  buried_args <- rlang::set_names(args, buried_nms)
-  .env <- rlang::env(.env, !!!buried_args)
-  args <- rlang::set_names(buried_nms, names(args))
-  args <- rlang::syms(args)
-  if (rlang::is_function(.fn)) {
-    `:=` <- rlang::`:=`
-    rlang::env_bind(.env, `:=`(!!fn_nm, .fn))
-    .fn <- fn_nm
+  buried_nms <- as.character(seq_len(length(args) + is.character(.fn)))
+  if (is.character(.fn)) {
+    buried_nms <- buried_nms[buried_nms != .fn][seq_along(args)]
   }
-  call <- rlang::call2(.fn, !!!args)
+  missing_args <- vapply(args, rlang::is_missing, logical(1))
+  buried_args <- args[!missing_args]
+  names(buried_args) <- buried_nms[!missing_args]
+  .env <- list2env(buried_args, parent = .env)
+  call_args <- lapply(buried_nms, as.name)
+  call_args[missing_args] <- args[missing_args]
+  names(call_args) <- names(args)
+  if (is.function(.fn)) {
+    .env$.fn <- .fn
+    .fn <- ".fn"
+  }
+  call <- as.call(c(list(as.name(.fn)), call_args))
   rlang::eval_bare(call, .env)
 }
 
@@ -175,9 +215,10 @@ capitalize <- function(x, force_tolower = FALSE) {
 #' unnest_fun(data2, cols = "data")
 #' unnest_fun(data2, cols = "data", keep_empty = TRUE)
 unnest_fun <- function(
-    data,
-    cols,
-    keep_empty = FALSE) {
+  data,
+  cols,
+  keep_empty = FALSE
+) {
   if (nrow(data) == 0 || length(cols) == 0) {
     return(data)
   }
@@ -238,11 +279,12 @@ unnest_fun <- function(
 #' remove_space(multiline)
 #' remove_space(multiline, preserve_newlines = FALSE)
 remove_space <- function(
-    x,
-    trim_start = TRUE,
-    trim_end = FALSE,
-    collapse_multiple = TRUE,
-    preserve_newlines = TRUE) {
+  x,
+  trim_start = TRUE,
+  trim_end = FALSE,
+  collapse_multiple = TRUE,
+  preserve_newlines = TRUE
+) {
   if (is.null(x)) {
     return(NULL)
   }
@@ -337,10 +379,11 @@ remove_space <- function(
 #' f_evaluated <- try_get(expr = f())
 #' print(f_evaluated)
 try_get <- function(
-    expr,
-    max_tries = 5,
-    error_message = "",
-    retry_message = "Retrying...") {
+  expr,
+  max_tries = 5,
+  error_message = "",
+  retry_message = "Retrying..."
+) {
   out <- simpleError("start")
   ntry <- 0
   while (inherits(out, "error")) {
@@ -383,14 +426,15 @@ try_get <- function(
 #'
 #' @export
 download <- function(
-    url,
-    destfile,
-    methods = c(
-      "auto", "wget", "libcurl", "curl", "wininet", "internal"
-    ),
-    quiet = FALSE,
-    ...,
-    max_tries = 2) {
+  url,
+  destfile,
+  methods = c(
+    "auto", "wget", "libcurl", "curl", "wininet", "internal"
+  ),
+  quiet = FALSE,
+  ...,
+  max_tries = 2
+) {
   if (missing(url) || missing(destfile)) {
     log_message(
       "{.arg url} and {.arg destfile} must be both provided",
@@ -746,10 +790,11 @@ max_depth <- function(x, depth = 0) {
 #' x <- c(10, 20, NA, 15, 35)
 #' is_outlier(x, nmads = 2, type = "higher") # returns 3, 5
 is_outlier <- function(
-    x,
-    nmads = 2.5,
-    constant = 1.4826,
-    type = c("both", "lower", "higher")) {
+  x,
+  nmads = 2.5,
+  constant = 1.4826,
+  type = c("both", "lower", "higher")
+) {
   type <- match.arg(type, c("both", "lower", "higher"))
   mad <- stats::mad(x, constant = constant, na.rm = TRUE)
   upper <- stats::median(x, na.rm = TRUE) + nmads * mad

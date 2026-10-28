@@ -24,12 +24,13 @@
 #' @examples
 #' figlet("thisutils")
 figlet <- function(
-    text,
-    font = "Slant",
-    width = getOption("width", 80),
-    justify = "left",
-    absolute = FALSE,
-    strip = TRUE) {
+  text,
+  font = "Slant",
+  width = getOption("width", 80),
+  justify = "left",
+  absolute = FALSE,
+  strip = TRUE
+) {
   font <- figlet_font(font)
   str <- .figlet_render(
     text,
@@ -47,12 +48,13 @@ figlet <- function(
 }
 
 .figlet_render <- function(
-    text,
-    font,
-    width = getOption("width", 80),
-    justify = "left",
-    absolute = FALSE,
-    strip = TRUE) {
+  text,
+  font,
+  width = getOption("width", 80),
+  justify = "left",
+  absolute = FALSE,
+  strip = TRUE
+) {
   if (any(grepl("\n", text, fixed = TRUE))) {
     text <- unlist(strsplit(text, "\n", fixed = TRUE))
   }
@@ -78,7 +80,7 @@ figlet <- function(
   height <- font$options$height
   buffer <- matrix(character(), height, 0)
 
-  char_index <- .asc(text)
+  char_index <- strtoi(charToRaw(text), 16L)
   for (char in seq_along(char_index)) {
     cur_char <- font$chars[[char_index[[char]]]]
     if (is.null(cur_char)) {
@@ -189,11 +191,12 @@ figlet <- function(
 }
 
 .figlet_render_layout <- function(
-    buffer,
-    hard_blank,
-    width,
-    justify,
-    absolute) {
+  buffer,
+  hard_blank,
+  width,
+  justify,
+  absolute
+) {
   if (is.list(buffer)) {
     template <- list(
       template = character(),
@@ -246,9 +249,10 @@ figlet <- function(
 }
 
 .figlet_render_layout_template <- function(
-    text, hard_blank,
-    offset_char = 0,
-    offset_text = 0) {
+  text, hard_blank,
+  offset_char = 0,
+  offset_text = 0
+) {
   pos <- apply(array(text %in% c(" ", hard_blank), dim(text)), 2, all)
   map <- c(1:9, letters, LETTERS)
   n <- cumsum(pos) + 1L + offset_char
@@ -305,8 +309,7 @@ figlet_font <- function(font) {
 
   is_comment <- seq_len(options$comment_lines) + 1L
   chars <- .figlet_font_characters(
-    data[-c(1L, is_comment)], options,
-    filename, name
+    data[-c(1L, is_comment)], options
   )
   ret <- list(
     name = name,
@@ -374,19 +377,17 @@ figlet_font <- function(font) {
   options
 }
 
-.figlet_font_characters <- function(data, options, filename, name) {
+.figlet_font_characters <- function(data, options) {
   code_standard <- 32:126
   code_extra <- c(196, 214, 220, 228, 246, 252, 223)
   code_req <- c(code_standard, code_extra)
 
-  get_character <- function(i, d) {
-    .figlet_font_character(d[, i], options)
-  }
-
   i_req <- seq_len(length(code_req) * options$height)
   dat_req <- matrix(data[i_req], options$height)
   chars <- vector("list", max(code_req))
-  chars[code_req] <- lapply(seq_along(code_req), get_character, dat_req)
+  chars[code_req] <- lapply(seq_along(code_req), function(i) {
+    .figlet_font_character(dat_req[, i], options)
+  })
   chars
 }
 
@@ -415,10 +416,6 @@ figlet_font <- function(font) {
     width = as.integer(char_width),
     data = matrix(unlist(m), length(txt), byrow = TRUE)
   )
-}
-
-.asc <- function(x) {
-  strtoi(charToRaw(x), 16L)
 }
 
 .vcapply <- function(X, FUN, ...) {

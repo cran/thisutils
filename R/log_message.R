@@ -381,6 +381,11 @@ log_message <- function(
   expr_quo <- if (expr_supplied) substitute(expr) else NULL
   verbose <- get_verbose(verbose)
   message_type <- match.arg(message_type)
+
+  if (!expr_supplied && !verbose && !(message_type %in% c("error", "ask"))) {
+    return(invisible(NULL))
+  }
+
   msg <- build_message(...)
   emit_message <- function(msg_text, msg_type = message_type, multiline = multiline_indent) {
     output_message(
@@ -433,7 +438,9 @@ log_message <- function(
   )
 
   if (!expr_supplied) {
-    if (!verbose) {
+    # 'ask' is not silenced by verbose = FALSE, matching error and the Python/Shell versions:
+    # Prompt text is emitted by emit_message; askYesNo uses an empty prompt to avoid duplicate printing.
+    if (!verbose && message_type != "ask") {
       return(invisible(NULL))
     }
 
@@ -497,7 +504,9 @@ log_message <- function(
 #' @title Get the verbose option
 #'
 #' @description
-#' Get the verbose option from the global options or the local argument.
+#' Resolve `options(log_message.verbose)`.
+#' An explicit `verbose` argument wins. Otherwise the option is used, and the
+#' default is `TRUE`.
 #'
 #' @param verbose The verbose option.
 #' Default is `NULL`, which means to get the verbose option from the global options.
@@ -548,6 +557,37 @@ get_verbose <- function(verbose = NULL) {
   }
 
   verbose_global
+}
+
+#' @title Temporarily set the shared verbose switch
+#'
+#' @description
+#' Set `options(log_message.verbose)` for the calling frame, then restore the
+#' previous value. Nested `get_verbose()` calls, including compiled
+#' `log_message()` code, see the temporary value.
+#'
+#' @param verbose Single logical value.
+#'
+#' @return `verbose`, invisibly.
+#' @export
+#'
+#' @examples
+#' local({
+#'   local_verbose(FALSE)
+#'   get_verbose()
+#' })
+local_verbose <- function(verbose) {
+  if (!is.logical(verbose) || length(verbose) != 1L || is.na(verbose)) {
+    cli::cli_abort("{.arg verbose} must be a single logical value.")
+  }
+
+  old_options <- options(log_message.verbose = verbose)
+  exit_expr <- substitute(
+    options(old_options),
+    list(old_options = old_options)
+  )
+  do.call(on.exit, list(exit_expr, add = TRUE), envir = parent.frame())
+  invisible(verbose)
 }
 
 build_message <- function(...) {
@@ -1236,20 +1276,7 @@ output_message <- function(
     }
     indent_part <- get_indent_part(symbol, level)
 
-    if (symbol != "  ") {
-      final_msg <- paste0(
-        timestamp_part,
-        paste(rep(symbol, level), collapse = ""),
-        " ",
-        msg
-      )
-    } else {
-      final_msg <- paste0(
-        timestamp_part,
-        indent_part,
-        msg
-      )
-    }
+    final_msg <- paste0(timestamp_part, indent_part, msg)
 
     if (!is.null(text_color) || !is.null(back_color) || !is.null(text_style)) {
       if (timestamp_style) {
@@ -1659,6 +1686,9 @@ replace_expressions <- function(text, env) {
 
       match <- substr(text, start_pos, start_pos + match_length - 1)
       replacement <- process_match(match, env)
+      if (length(replacement) != 1) {
+        replacement <- paste(replacement, collapse = " ")
+      }
 
       text <- paste0(
         substr(text, 1, start_pos - 1),
